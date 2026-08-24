@@ -1,6 +1,6 @@
 # Limitations
 
-WLANScope currently inventories Windows network interfaces and inspects current Wi-Fi connections. It does not yet inspect IP configuration, nearby networks, or local devices.
+WLANScope currently inventories Windows network interfaces and inspects current Wi-Fi and IP/routing context. It does not yet inspect nearby networks or local devices.
 
 The following limitations define the planned v1 scope:
 
@@ -11,10 +11,14 @@ The following limitations define the planned v1 scope:
 - Multiple WLAN interfaces are preserved, but connection details can become stale independently while collection is in progress.
 - The Native WLAN API may not expose every driver-specific radio or security detail.
 - Collectors may return partial results when a source is unavailable, unsupported, denied, or malformed.
+- PowerShell networking cmdlets and CIM can be denied by Windows policy. IP Helper results remain available while affected DNS, metric, or DHCP enrichment is reported as partial.
+- DHCP lease timestamps are not collected because the optional CIM source is not sufficiently available to make them a dependable M3 contract.
+- Multiple default routes and VPN routing are preserved. A single preferred route is not asserted when effective metrics are missing or tied.
 - Adapter manufacturer, driver, hidden, and virtual metadata depends on `Get-NetAdapter` availability and may be reported as unavailable while the primary IP Helper inventory remains usable.
 - Interface state is observed at collection time and can change immediately afterward.
 - Physical and virtual classification uses structured Windows fields. M1 does not infer VPN status from adapter names.
 - A full scan will combine observations made at different times and will not represent an atomic network snapshot.
+- Current network data is assembled from sequential API calls and is not an atomic snapshot.
 - Missing responses will not prove that a device is offline.
 - WLANScope will not provide offensive wireless operations, credential access, exploitation, packet manipulation, or access-control bypass.
 

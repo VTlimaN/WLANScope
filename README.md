@@ -6,7 +6,7 @@ WLANScope is a Windows-focused cybersecurity and network visibility project crea
 
 ## Project status
 
-WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces through structured operating-system sources and inspects the current wireless connection through the Native WLAN API. Nearby Wi-Fi discovery, device discovery, and reporting remain planned work and are not implemented yet.
+WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, and analyzes current IPv4/IPv6, routing, DNS, and DHCP context through structured Windows sources. Nearby Wi-Fi discovery, device discovery, and reporting remain planned work and are not implemented yet.
 
 ## Requirements
 
@@ -30,6 +30,7 @@ python -m venv .venv
 .\.venv\Scripts\wlanscope.exe --version
 .\.venv\Scripts\wlanscope.exe adapters
 .\.venv\Scripts\wlanscope.exe wifi
+.\.venv\Scripts\wlanscope.exe current
 .\.venv\Scripts\python.exe -m wlanscope --help
 .\.venv\Scripts\python.exe -m wlanscope --version
 ```
@@ -40,6 +41,7 @@ Available behavior:
 - `--version` displays package metadata versioning;
 - `adapters` lists interfaces reported by Windows, with structured IP Helper data and optional PowerShell enrichment.
 - `wifi` inspects current wireless connections reported by the Native WLAN API.
+- `current` presents the current IP assignments, default routes, metrics, DNS, and DHCP context.
 
 The `wifi` command does not scan nearby networks, retrieve profile XML, or collect Wi-Fi credentials.
 
@@ -68,7 +70,7 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M0: project foundation, completed
 - M1: Windows network interface inventory, implemented
 - M2: current Wi-Fi analysis, implemented
-- M3: IP, DNS, DHCP, and routing context
+- M3: IP, DNS, DHCP, and routing context, implemented
 - M4-M5: nearby Wi-Fi discovery and details
 - M6-M7: bounded local device discovery and enrichment
 - M8: full scan orchestration

@@ -14,6 +14,8 @@ Windows location consent is distinct from Administrator access. WLANScope will r
 
 The current Wi-Fi command reads non-secret profile and connection metadata through the Native WLAN API. An access-denied result is reported without falling back to a mechanism intended to evade Windows privacy controls.
 
+Current network analysis is read-only. WLANScope does not create or remove addresses or routes, change metrics or DNS servers, renew DHCP leases, or modify adapter configuration.
+
 ## Prohibited capabilities
 
 WLANScope will not implement:
@@ -35,7 +37,7 @@ The approved v1 scope also excludes port scanning and service exploitation.
 
 The adapters and current Wi-Fi commands may display local interface names, MAC addresses, SSIDs, BSSIDs, and profile names in the terminal. They do not persist this information automatically and never request profile key material or credentials.
 
-Future reports may contain internal hostnames, IP addresses, MAC addresses, SSIDs, BSSIDs, routes, adapter details, and other infrastructure metadata. Users must protect, retain, and share these reports according to their organization's data-handling requirements.
+Future reports may contain internal hostnames, IP addresses, prefixes, gateways, DNS and DHCP servers, MAC addresses, SSIDs, BSSIDs, routes, adapter details, and other infrastructure topology metadata. Users must protect, retain, and share these reports according to their organization's data-handling requirements.
 
 Reports will be created only when explicitly requested and will not contain credentials or Wi-Fi secrets.
 

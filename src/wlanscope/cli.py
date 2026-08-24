@@ -5,9 +5,17 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
 from wlanscope.domain.interfaces import InterfaceCollectionError, NetworkInterface
+from wlanscope.domain.network import (
+    UNUSED_ROUTE_METRIC,
+    CurrentNetworkSnapshot,
+    InterfaceNetworkContext,
+    NetworkCollectionError,
+    Route,
+)
 from wlanscope.domain.wifi import (
     CurrentWifiSnapshot,
     WifiCollectionError,
@@ -42,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inspect the current Wi-Fi connection",
         description="Inspect current Wi-Fi connection details reported by Windows.",
     )
+    subcommands.add_parser(
+        "current",
+        help="Inspect the current IP and routing context",
+        description="Inspect current IP, routing, DNS, and DHCP context reported by Windows.",
+    )
     return parser
 
 
@@ -49,6 +62,7 @@ def main(
     arguments: Sequence[str] | None = None,
     interface_use_case: ListNetworkInterfaces | None = None,
     wifi_use_case: InspectCurrentWifi | None = None,
+    current_use_case: InspectCurrentNetwork | None = None,
     console: Console | None = None,
 ) -> int:
     parser = build_parser()
@@ -61,6 +75,11 @@ def main(
     if parsed_arguments.command == "wifi":
         return _inspect_wifi(
             wifi_use_case or _create_wifi_use_case(),
+            console or Console(),
+        )
+    if parsed_arguments.command == "current":
+        return _inspect_current_network(
+            current_use_case or _create_current_use_case(),
             console or Console(),
         )
     return 0
@@ -76,6 +95,12 @@ def _create_wifi_use_case() -> InspectCurrentWifi:
     from wlanscope.composition import create_inspect_current_wifi
 
     return create_inspect_current_wifi()
+
+
+def _create_current_use_case() -> InspectCurrentNetwork:
+    from wlanscope.composition import create_inspect_current_network
+
+    return create_inspect_current_network()
 
 
 def _list_adapters(use_case: ListNetworkInterfaces, console: Console) -> int:
@@ -208,3 +233,125 @@ def _format_kilobits_per_second(value: int | None) -> str:
     megabits = value / 1_000
     precision = 0 if megabits.is_integer() else 1
     return f"{megabits:.{precision}f} Mbps"
+
+
+def _inspect_current_network(use_case: InspectCurrentNetwork, console: Console) -> int:
+    try:
+        snapshot = use_case.execute()
+    except NetworkCollectionError as error:
+        console.print(f"[bold red]Error:[/bold red] {error}")
+        return 1
+
+    console.print(f"[bold]{PROJECT_NAME}[/bold]")
+    console.print("Current Network", style="dim")
+    relevant = _relevant_network_contexts(snapshot)
+    if not relevant:
+        console.print("No usable IP configuration or default route was reported by Windows.")
+    for position, context in enumerate(relevant, start=1):
+        if len(relevant) > 1:
+            console.print(f"\n[bold]Interface {position}[/bold]")
+        console.print(_create_network_context_table(context, snapshot.default_routes))
+    console.print(f"Routes observed: {len(snapshot.routes)}", style="dim")
+    for issue in snapshot.issues:
+        console.print(f"[yellow]Warning ({issue.source.value}):[/yellow] {issue.message}")
+    return 3 if snapshot.is_partial else 0
+
+
+def _relevant_network_contexts(
+    snapshot: CurrentNetworkSnapshot,
+) -> tuple[InterfaceNetworkContext, ...]:
+    default_indices = {route.interface_index for route in snapshot.default_routes}
+    return tuple(
+        context
+        for context in snapshot.interfaces
+        if context.addresses or context.interface_index in default_indices
+    )
+
+
+def _create_network_context_table(
+    context: InterfaceNetworkContext,
+    default_routes: tuple[Route, ...],
+) -> Table:
+    table = Table(show_header=False, box=None, pad_edge=False)
+    table.add_column("Field", style="bold", no_wrap=True)
+    table.add_column("Value", overflow="fold")
+    name = (
+        context.network_interface.friendly_name
+        if context.network_interface is not None
+        else f"Interface {context.interface_index}"
+    )
+    table.add_row("Interface", Text(name))
+    table.add_row("Index", str(context.interface_index))
+    _add_ip_rows(table, context)
+    _add_dns_rows(table, context)
+    _add_dhcp_rows(table, context)
+    _add_default_route_rows(table, context.interface_index, default_routes)
+    if context.wifi_interface is not None:
+        table.add_row("Wi-Fi association", "Yes")
+    return table
+
+
+def _add_ip_rows(table: Table, context: InterfaceNetworkContext) -> None:
+    for version in (4, 6):
+        assignments = tuple(item for item in context.addresses if item.address.version == version)
+        for position, assignment in enumerate(assignments, start=1):
+            label = f"IPv{version}" if len(assignments) == 1 else f"IPv{version} #{position}"
+            scope = f"%{assignment.scope_id}" if assignment.scope_id else ""
+            table.add_row(
+                label,
+                f"{assignment.address}{scope}/{assignment.prefix_length} ({assignment.network})",
+            )
+
+
+def _add_dns_rows(table: Table, context: InterfaceNetworkContext) -> None:
+    if context.dns is None:
+        table.add_row("DNS", "Unavailable")
+        return
+    if not context.dns.servers:
+        table.add_row("DNS", "None configured")
+    for position, server in enumerate(context.dns.servers, start=1):
+        table.add_row(f"DNS #{position}", str(server))
+    if context.dns.suffix:
+        table.add_row("DNS suffix", Text(context.dns.suffix))
+
+
+def _add_dhcp_rows(table: Table, context: InterfaceNetworkContext) -> None:
+    table.add_row("DHCP IPv4", context.dhcp.ipv4_state.value)
+    table.add_row("DHCP IPv6", context.dhcp.ipv6_state.value)
+    if context.dhcp.server is not None:
+        table.add_row("DHCP server", str(context.dhcp.server))
+
+
+def _add_default_route_rows(
+    table: Table,
+    interface_index: int,
+    default_routes: tuple[Route, ...],
+) -> None:
+    routes = tuple(route for route in default_routes if route.interface_index == interface_index)
+    family_counts = {
+        version: sum(route.destination.version == version for route in routes) for version in (4, 6)
+    }
+    family_positions = {4: 0, 6: 0}
+    for route in routes:
+        version = route.destination.version
+        family_positions[version] += 1
+        family = f"IPv{route.destination.version}"
+        label = (
+            f"Default {family}"
+            if family_counts[version] == 1
+            else f"Default {family} #{family_positions[version]}"
+        )
+        scope = f"%{route.next_hop_scope_id}" if route.next_hop_scope_id else ""
+        table.add_row(label, f"{route.next_hop}{scope}")
+        route_metric = (
+            "Unavailable" if route.route_metric == UNUSED_ROUTE_METRIC else str(route.route_metric)
+        )
+        table.add_row("Route metric", route_metric)
+        table.add_row(
+            "Interface metric",
+            str(route.interface_metric) if route.interface_metric is not None else "Unavailable",
+        )
+        table.add_row(
+            "Effective metric",
+            str(route.effective_metric) if route.effective_metric is not None else "Unavailable",
+        )

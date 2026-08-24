@@ -4,6 +4,7 @@ import ctypes
 import sys
 from ctypes import wintypes
 from dataclasses import dataclass
+from ipaddress import IPv4Address, IPv6Address
 from typing import Protocol
 from uuid import UUID
 
@@ -24,13 +25,11 @@ NO_ERROR = 0
 GAA_FLAG_SKIP_UNICAST = 0x0001
 GAA_FLAG_SKIP_ANYCAST = 0x0002
 GAA_FLAG_SKIP_MULTICAST = 0x0004
-GAA_FLAG_SKIP_DNS_SERVER = 0x0008
 GAA_FLAG_INCLUDE_ALL_INTERFACES = 0x0100
 GET_ADAPTER_FLAGS = (
     GAA_FLAG_SKIP_UNICAST
     | GAA_FLAG_SKIP_ANYCAST
     | GAA_FLAG_SKIP_MULTICAST
-    | GAA_FLAG_SKIP_DNS_SERVER
     | GAA_FLAG_INCLUDE_ALL_INTERFACES
 )
 INITIAL_ADAPTER_BUFFER_SIZE = 15_000
@@ -39,6 +38,8 @@ MAX_ADAPTER_BUFFER_ATTEMPTS = 3
 IF_MAX_STRING_SIZE = 256
 IF_MAX_PHYS_ADDRESS_LENGTH = 32
 MAX_ADAPTER_ADDRESS_LENGTH = 8
+MAX_LINKED_ADDRESS_COUNT = 1024
+IP_ADAPTER_DHCP_ENABLED = 0x0004
 
 
 class _Guid(ctypes.Structure):
@@ -115,6 +116,10 @@ class _IpAdapterAddresses(ctypes.Structure):
     pass
 
 
+class _SocketAddress(ctypes.Structure):
+    _fields_ = [("Sockaddr", ctypes.c_void_p), ("SockaddrLength", ctypes.c_int)]
+
+
 _IpAdapterAddresses._fields_ = [
     ("Header", _AdapterHeader),
     ("Next", ctypes.POINTER(_IpAdapterAddresses)),
@@ -137,6 +142,21 @@ _IpAdapterAddresses._fields_ = [
     ("FirstPrefix", ctypes.c_void_p),
     ("TransmitLinkSpeed", ctypes.c_ulonglong),
     ("ReceiveLinkSpeed", ctypes.c_ulonglong),
+    ("FirstWinsServerAddress", ctypes.c_void_p),
+    ("FirstGatewayAddress", ctypes.c_void_p),
+    ("Ipv4Metric", wintypes.ULONG),
+    ("Ipv6Metric", wintypes.ULONG),
+    ("Luid", ctypes.c_ulonglong),
+    ("Dhcpv4Server", _SocketAddress),
+    ("CompartmentId", wintypes.ULONG),
+    ("NetworkGuid", _Guid),
+    ("ConnectionType", wintypes.ULONG),
+    ("TunnelType", wintypes.ULONG),
+    ("Dhcpv6Server", _SocketAddress),
+    ("Dhcpv6ClientDuid", ctypes.c_ubyte * 130),
+    ("Dhcpv6ClientDuidLength", wintypes.ULONG),
+    ("Dhcpv6Iaid", wintypes.ULONG),
+    ("FirstDnsSuffix", ctypes.c_void_p),
 ]
 
 
@@ -167,6 +187,12 @@ class AdapterAddressRecord:
     mtu: int | None
     receive_link_speed_bps: int | None
     transmit_link_speed_bps: int | None
+    dns_servers: tuple[IPv4Address | IPv6Address, ...] = ()
+    dns_suffix: str | None = None
+    ipv4_metric: int | None = None
+    ipv6_metric: int | None = None
+    dhcp_enabled: bool = False
+    dhcp_server: IPv4Address | None = None
 
 
 class IpHelperBackend(Protocol):
@@ -381,6 +407,12 @@ def _convert_adapter_list(first_adapter_address: int) -> tuple[AdapterAddressRec
                 mtu=_positive_or_none(int(adapter.Mtu)),
                 receive_link_speed_bps=_positive_or_none(int(adapter.ReceiveLinkSpeed)),
                 transmit_link_speed_bps=_positive_or_none(int(adapter.TransmitLinkSpeed)),
+                dns_servers=_convert_linked_addresses(adapter.FirstDnsServerAddress),
+                dns_suffix=_optional_text(adapter.DnsSuffix),
+                ipv4_metric=int(adapter.Ipv4Metric),
+                ipv6_metric=int(adapter.Ipv6Metric),
+                dhcp_enabled=bool(int(adapter.Flags) & IP_ADAPTER_DHCP_ENABLED),
+                dhcp_server=_convert_dhcp_server(adapter.Dhcpv4Server),
             )
         )
         current_address = ctypes.cast(adapter.Next, ctypes.c_void_p).value
@@ -453,3 +485,41 @@ def _optional_text(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _convert_linked_addresses(first_address: int | None) -> tuple[IPv4Address | IPv6Address, ...]:
+    addresses: list[IPv4Address | IPv6Address] = []
+    current_address = first_address
+    while current_address:
+        if len(addresses) >= MAX_LINKED_ADDRESS_COUNT:
+            raise WindowsApiError("GetAdaptersAddresses", 13)
+        header = ctypes.cast(current_address, ctypes.POINTER(_AdapterDnsAddress)).contents
+        parsed = _convert_socket_address(header.Address)
+        if parsed is not None:
+            addresses.append(parsed)
+        current_address = ctypes.cast(header.Next, ctypes.c_void_p).value
+    return tuple(addresses)
+
+
+class _AdapterDnsAddress(ctypes.Structure):
+    _fields_ = [
+        ("Alignment", ctypes.c_ulonglong),
+        ("Next", ctypes.c_void_p),
+        ("Address", _SocketAddress),
+    ]
+
+
+def _convert_dhcp_server(value: _SocketAddress) -> IPv4Address | None:
+    parsed = _convert_socket_address(value)
+    return parsed if isinstance(parsed, IPv4Address) and not parsed.is_unspecified else None
+
+
+def _convert_socket_address(value: _SocketAddress) -> IPv4Address | IPv6Address | None:
+    if not value.Sockaddr or value.SockaddrLength < 2:
+        return None
+    family = ctypes.c_ushort.from_address(value.Sockaddr).value
+    if family == 2 and value.SockaddrLength >= 16:
+        return IPv4Address(ctypes.string_at(value.Sockaddr + 4, 4))
+    if family == 23 and value.SockaddrLength >= 28:
+        return IPv6Address(ctypes.string_at(value.Sockaddr + 8, 16))
+    return None

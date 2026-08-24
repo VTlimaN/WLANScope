@@ -1,11 +1,13 @@
 import subprocess
 import sys
 from io import StringIO
+from ipaddress import ip_address, ip_network
 
 import pytest
 from pytest import CaptureFixture
 from rich.console import Console
 
+from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
 from wlanscope.cli import PROJECT_NAME, PROJECT_TAGLINE, main
@@ -19,6 +21,20 @@ from wlanscope.domain.interfaces import (
     MediaState,
     NetworkInterface,
     OperationalState,
+)
+from wlanscope.domain.network import (
+    AddressOrigin,
+    DadState,
+    DhcpState,
+    InterfaceNetworkEnrichment,
+    IpAddressAssignment,
+    NativeNetworkData,
+    NetworkCollectionError,
+    NetworkEnrichmentError,
+    PrefixOrigin,
+    Route,
+    RouteOrigin,
+    RouteProtocol,
 )
 from wlanscope.domain.wifi import (
     CurrentWifiSnapshot,
@@ -280,6 +296,96 @@ def test_wifi_command_reports_operational_failure_without_traceback() -> None:
     assert "Traceback" not in rendered
 
 
+def test_current_command_renders_dual_stack_context_without_route_dump() -> None:
+    output = StringIO()
+    use_case = InspectCurrentNetwork(
+        StaticCurrentPrimaryCollector(_current_data(dual_stack=True)),
+        StaticCurrentEnrichmentCollector(_current_enrichments()),
+    )
+
+    exit_code = main(
+        ["current"],
+        current_use_case=use_case,
+        console=Console(file=output, color_system=None, width=100),
+    )
+
+    rendered = output.getvalue()
+    assert exit_code == 0
+    assert "Current Network" in rendered
+    assert "192.0.2.24/24" in rendered
+    assert "2001:db8::24/64" in rendered
+    assert "192.0.2.53" in rendered
+    assert "Routes observed: 3" in rendered
+    assert "203.0.113.0/24" not in rendered
+
+
+def test_current_command_reports_partial_dhcp_without_traceback() -> None:
+    output = StringIO()
+    use_case = InspectCurrentNetwork(
+        StaticCurrentPrimaryCollector(_current_data()),
+        StaticCurrentEnrichmentCollector(_current_enrichments()),
+        FailingCurrentDhcpCollector(),
+    )
+
+    exit_code = main(
+        ["current"],
+        current_use_case=use_case,
+        console=Console(file=output, color_system=None),
+    )
+
+    rendered = output.getvalue()
+    assert exit_code == 3
+    assert "DHCP enrichment" in rendered
+    assert "Traceback" not in rendered
+
+
+def test_current_command_handles_no_network() -> None:
+    output = StringIO()
+    use_case = InspectCurrentNetwork(StaticCurrentPrimaryCollector(NativeNetworkData((), ())))
+
+    exit_code = main(
+        ["current"],
+        current_use_case=use_case,
+        console=Console(file=output, color_system=None),
+    )
+
+    assert exit_code == 0
+    assert "No usable IP configuration" in output.getvalue()
+
+
+def test_current_command_reports_primary_failure_without_traceback() -> None:
+    output = StringIO()
+
+    exit_code = main(
+        ["current"],
+        current_use_case=InspectCurrentNetwork(FailingCurrentPrimaryCollector()),
+        console=Console(file=output, color_system=None),
+    )
+
+    rendered = output.getvalue()
+    assert exit_code == 1
+    assert "IP configuration unavailable" in rendered
+    assert "Traceback" not in rendered
+
+
+def test_current_command_numbers_default_routes_per_address_family() -> None:
+    output = StringIO()
+    use_case = InspectCurrentNetwork(
+        StaticCurrentPrimaryCollector(_current_data(dual_stack=True)),
+        StaticCurrentEnrichmentCollector(_current_enrichments()),
+    )
+
+    main(
+        ["current"],
+        current_use_case=use_case,
+        console=Console(file=output, color_system=None),
+    )
+
+    rendered = output.getvalue()
+    assert "Default IPv4 #" not in rendered
+    assert "Default IPv6 #" not in rendered
+
+
 class StaticInterfaceCollector:
     def __init__(self, interfaces: tuple[NetworkInterface, ...]) -> None:
         self._interfaces = interfaces
@@ -309,6 +415,32 @@ class StaticWifiCollector:
 class FailingWifiCollector:
     def collect(self) -> CurrentWifiSnapshot:
         raise WifiCollectionError("Wi-Fi collection unavailable")
+
+
+class StaticCurrentPrimaryCollector:
+    def __init__(self, data: NativeNetworkData) -> None:
+        self._data = data
+
+    def collect(self) -> NativeNetworkData:
+        return self._data
+
+
+class FailingCurrentPrimaryCollector:
+    def collect(self) -> NativeNetworkData:
+        raise NetworkCollectionError("IP configuration unavailable")
+
+
+class StaticCurrentEnrichmentCollector:
+    def __init__(self, records: tuple[InterfaceNetworkEnrichment, ...]) -> None:
+        self._records = records
+
+    def collect(self) -> tuple[InterfaceNetworkEnrichment, ...]:
+        return self._records
+
+
+class FailingCurrentDhcpCollector:
+    def collect(self) -> tuple[()]:
+        raise NetworkEnrichmentError("DHCP source unavailable")
 
 
 def _interface() -> NetworkInterface:
@@ -358,4 +490,63 @@ def _wifi_connection(
         receive_rate_kbps=866_700,
         transmit_rate_kbps=433_300,
         security=WifiSecurity(True, WifiAuthentication(6), WifiCipher(4)),
+    )
+
+
+def _current_data(dual_stack: bool = False) -> NativeNetworkData:
+    addresses = [_current_assignment("192.0.2.24", 24)]
+    routes = [
+        _current_route("0.0.0.0/0", "192.0.2.1", 10),
+        _current_route("203.0.113.0/24", "0.0.0.0", 0),
+    ]
+    if dual_stack:
+        addresses.append(_current_assignment("2001:db8::24", 64))
+        routes.append(_current_route("::/0", "2001:db8::1", 20))
+    return NativeNetworkData(tuple(addresses), tuple(routes))
+
+
+def _current_assignment(address: str, prefix: int) -> IpAddressAssignment:
+    return IpAddressAssignment(
+        ip_address(address),
+        prefix,
+        7,
+        PrefixOrigin(3),
+        AddressOrigin(3),
+        DadState(4),
+        3600,
+        7200,
+        False,
+    )
+
+
+def _current_route(destination: str, next_hop: str, metric: int) -> Route:
+    return Route(
+        ip_network(destination),
+        ip_address(next_hop),
+        7,
+        metric,
+        None,
+        RouteProtocol(3),
+        RouteOrigin(2),
+    )
+
+
+def _current_enrichments() -> tuple[InterfaceNetworkEnrichment, ...]:
+    return (
+        InterfaceNetworkEnrichment(
+            7,
+            4,
+            20,
+            DhcpState.ENABLED,
+            (ip_address("192.0.2.53"),),
+            "example.invalid",
+        ),
+        InterfaceNetworkEnrichment(
+            7,
+            6,
+            30,
+            DhcpState.DISABLED,
+            (ip_address("2001:db8::53"),),
+            "example.invalid",
+        ),
     )

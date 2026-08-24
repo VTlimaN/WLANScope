@@ -12,7 +12,11 @@ from wlanscope.platform.windows.ip_helper import (
     AdapterAddressRecord,
     InterfaceRow,
     WindowsInterfaceCollector,
+    _AdapterDnsAddress,
+    _convert_linked_addresses,
+    _convert_socket_address,
     _MibIfRow2,
+    _SocketAddress,
     combine_ip_helper_records,
 )
 
@@ -22,6 +26,40 @@ def test_mib_if_row2_layout_matches_64_bit_windows_contract() -> None:
     assert _MibIfRow2.TransmitLinkSpeed.offset == 1192
     assert _MibIfRow2.ReceiveLinkSpeed.offset == 1200
     assert _MibIfRow2.OutQLen.offset == 1344
+
+
+def test_converts_native_ipv4_and_ipv6_socket_addresses() -> None:
+    ipv4_buffer, ipv4 = _socket_address(2, bytes.fromhex("C0000235"))
+    ipv6_buffer, ipv6 = _socket_address(23, bytes.fromhex("20010DB8000000000000000000000053"))
+
+    assert ipv4_buffer.raw
+    assert ipv6_buffer.raw
+    assert str(_convert_socket_address(ipv4)) == "192.0.2.53"
+    assert str(_convert_socket_address(ipv6)) == "2001:db8::53"
+
+
+def test_converts_linked_dns_addresses_in_source_order() -> None:
+    first_buffer, first_socket = _socket_address(2, bytes.fromhex("C0000235"))
+    second_buffer, second_socket = _socket_address(2, bytes.fromhex("C6336435"))
+    second = _AdapterDnsAddress(Address=second_socket)
+    first = _AdapterDnsAddress(Next=ctypes.addressof(second), Address=first_socket)
+
+    addresses = _convert_linked_addresses(ctypes.addressof(first))
+
+    assert first_buffer.raw
+    assert second_buffer.raw
+    assert [str(address) for address in addresses] == ["192.0.2.53", "198.51.100.53"]
+
+
+def _socket_address(
+    family: int, address: bytes
+) -> tuple[ctypes.Array[ctypes.c_char], _SocketAddress]:
+    length = 16 if family == 2 else 28
+    offset = 4 if family == 2 else 8
+    buffer = ctypes.create_string_buffer(length)
+    ctypes.c_ushort.from_buffer(buffer).value = family
+    ctypes.memmove(ctypes.addressof(buffer) + offset, address, len(address))
+    return buffer, _SocketAddress(ctypes.addressof(buffer), length)
 
 
 @pytest.mark.parametrize(

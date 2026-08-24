@@ -84,7 +84,7 @@ class PowerShellTimeoutError(InterfaceEnrichmentError):
 class PowerShellCommandError(InterfaceEnrichmentError):
     def __init__(self, return_code: int) -> None:
         self.return_code = return_code
-        super().__init__(f"PowerShell adapter enrichment failed with exit code {return_code}")
+        super().__init__(f"PowerShell command failed with exit code {return_code}")
 
 
 class PowerShellDataError(InterfaceEnrichmentError):
@@ -119,7 +119,7 @@ class PowerShellRunner:
         try:
             result = self._executor(arguments, self._timeout_seconds)
         except subprocess.TimeoutExpired as error:
-            raise PowerShellTimeoutError("PowerShell adapter enrichment timed out") from error
+            raise PowerShellTimeoutError("PowerShell command timed out") from error
         except UnicodeError as error:
             raise PowerShellDataError("PowerShell returned invalid UTF-8 data") from error
         if result.return_code != 0:
