@@ -10,10 +10,12 @@ from wlanscope.domain.interfaces import (
     NetworkInterface,
     OperationalState,
 )
+from wlanscope.domain.wifi import CurrentWifiSnapshot, WifiConnection, WifiInterfaceSnapshot
 
 __all__ = (
     "AdapterEnrichment",
     "AdministrativeState",
+    "CurrentWifiSnapshot",
     "InterfaceCollectionError",
     "InterfaceEnrichmentError",
     "InterfaceInventory",
@@ -22,4 +24,6 @@ __all__ = (
     "MediaState",
     "NetworkInterface",
     "OperationalState",
+    "WifiConnection",
+    "WifiInterfaceSnapshot",
 )

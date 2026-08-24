@@ -12,6 +12,8 @@ The application will collect the maximum useful information available to a norma
 
 Windows location consent is distinct from Administrator access. WLANScope will respect location privacy decisions and will not attempt to bypass them.
 
+The current Wi-Fi command reads non-secret profile and connection metadata through the Native WLAN API. An access-denied result is reported without falling back to a mechanism intended to evade Windows privacy controls.
+
 ## Prohibited capabilities
 
 WLANScope will not implement:
@@ -31,7 +33,7 @@ The approved v1 scope also excludes port scanning and service exploitation.
 
 ## Sensitive output
 
-The current adapters command may display local interface names and MAC addresses in the terminal. It does not persist this inventory automatically.
+The adapters and current Wi-Fi commands may display local interface names, MAC addresses, SSIDs, BSSIDs, and profile names in the terminal. They do not persist this information automatically and never request profile key material or credentials.
 
 Future reports may contain internal hostnames, IP addresses, MAC addresses, SSIDs, BSSIDs, routes, adapter details, and other infrastructure metadata. Users must protect, retain, and share these reports according to their organization's data-handling requirements.
 

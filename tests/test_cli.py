@@ -6,6 +6,7 @@ import pytest
 from pytest import CaptureFixture
 from rich.console import Console
 
+from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
 from wlanscope.cli import PROJECT_NAME, PROJECT_TAGLINE, main
 from wlanscope.domain.interfaces import (
@@ -18,6 +19,22 @@ from wlanscope.domain.interfaces import (
     MediaState,
     NetworkInterface,
     OperationalState,
+)
+from wlanscope.domain.wifi import (
+    CurrentWifiSnapshot,
+    WifiAuthentication,
+    WifiBssid,
+    WifiCipher,
+    WifiCollectionError,
+    WifiConnection,
+    WifiConnectionMode,
+    WifiInterfaceSnapshot,
+    WifiInterfaceState,
+    WifiIssue,
+    WifiIssueCode,
+    WifiPhyType,
+    WifiSecurity,
+    WifiSsid,
 )
 from wlanscope.version import __version__
 
@@ -138,6 +155,131 @@ def test_adapters_command_reports_partial_enrichment() -> None:
     assert "Warning" in output.getvalue()
 
 
+def test_wifi_command_renders_current_connection_without_secrets() -> None:
+    output = StringIO()
+    snapshot = CurrentWifiSnapshot((_wifi_interface(1, _wifi_connection()),))
+
+    exit_code = main(
+        ["wifi"],
+        wifi_use_case=InspectCurrentWifi(StaticWifiCollector(snapshot)),
+        console=Console(file=output, color_system=None, width=100),
+    )
+
+    rendered = output.getvalue()
+    assert exit_code == 0
+    assert "Current Wi-Fi" in rendered
+    assert "SANITIZED" in rendered
+    assert "78%" in rendered
+    assert "866.7 Mbps" in rendered
+    assert "password" not in rendered.casefold()
+    assert "key material" not in rendered.casefold()
+
+
+def test_wifi_command_renders_disconnected_interface() -> None:
+    output = StringIO()
+    snapshot = CurrentWifiSnapshot((_wifi_interface(4),))
+
+    exit_code = main(
+        ["wifi"],
+        wifi_use_case=InspectCurrentWifi(StaticWifiCollector(snapshot)),
+        console=Console(file=output, color_system=None),
+    )
+
+    assert exit_code == 0
+    assert "Disconnected" in output.getvalue()
+
+
+def test_wifi_command_reports_no_wireless_interface() -> None:
+    output = StringIO()
+
+    exit_code = main(
+        ["wifi"],
+        wifi_use_case=InspectCurrentWifi(StaticWifiCollector(CurrentWifiSnapshot(()))),
+        console=Console(file=output, color_system=None),
+    )
+
+    assert exit_code == 0
+    assert "No Wi-Fi interfaces" in output.getvalue()
+
+
+def test_wifi_command_reports_access_denied_as_partial_without_traceback() -> None:
+    output = StringIO()
+    issue = WifiIssue(
+        WifiIssueCode.ACCESS_DENIED,
+        "Windows denied access. Location access may be required.",
+    )
+
+    exit_code = main(
+        ["wifi"],
+        wifi_use_case=InspectCurrentWifi(
+            StaticWifiCollector(CurrentWifiSnapshot((_wifi_interface(1),), (issue,)))
+        ),
+        console=Console(file=output, color_system=None),
+    )
+
+    rendered = output.getvalue()
+    assert exit_code == 3
+    assert "Warning" in rendered
+    assert "Location access may be required" in rendered
+    assert "Traceback" not in rendered
+
+
+def test_wifi_command_renders_unknown_values_and_hidden_ssid() -> None:
+    output = StringIO()
+    connection = _wifi_connection(ssid=WifiSsid(b""), phy_type=WifiPhyType(99))
+
+    exit_code = main(
+        ["wifi"],
+        wifi_use_case=InspectCurrentWifi(
+            StaticWifiCollector(CurrentWifiSnapshot((_wifi_interface(1, connection),)))
+        ),
+        console=Console(file=output, color_system=None),
+    )
+
+    rendered = output.getvalue()
+    assert exit_code == 0
+    assert "<Hidden or empty>" in rendered
+    assert "Unknown (99)" in rendered
+
+
+def test_wifi_command_renders_multiple_interfaces() -> None:
+    output = StringIO()
+    snapshot = CurrentWifiSnapshot(
+        (
+            _wifi_interface(1, _wifi_connection()),
+            WifiInterfaceSnapshot(
+                "bbbbbbbb-0000-0000-0000-000000000002",
+                "Sanitized adapter B",
+                WifiInterfaceState(4),
+            ),
+        )
+    )
+
+    exit_code = main(
+        ["wifi"],
+        wifi_use_case=InspectCurrentWifi(StaticWifiCollector(snapshot)),
+        console=Console(file=output, color_system=None),
+    )
+
+    assert exit_code == 0
+    assert output.getvalue().count("Interface ") >= 2
+
+
+def test_wifi_command_reports_operational_failure_without_traceback() -> None:
+    output = StringIO()
+
+    exit_code = main(
+        ["wifi"],
+        wifi_use_case=InspectCurrentWifi(FailingWifiCollector()),
+        console=Console(file=output, color_system=None),
+    )
+
+    rendered = output.getvalue()
+    assert exit_code == 1
+    assert "Wi-Fi collection unavailable" in rendered
+    assert "Traceback" not in rendered
+
+
 class StaticInterfaceCollector:
     def __init__(self, interfaces: tuple[NetworkInterface, ...]) -> None:
         self._interfaces = interfaces
@@ -154,6 +296,19 @@ class FailingInterfaceCollector:
 class FailingAdapterEnrichmentCollector:
     def collect(self) -> tuple[AdapterEnrichment, ...]:
         raise InterfaceEnrichmentError("Adapter enrichment unavailable")
+
+
+class StaticWifiCollector:
+    def __init__(self, snapshot: CurrentWifiSnapshot) -> None:
+        self._snapshot = snapshot
+
+    def collect(self) -> CurrentWifiSnapshot:
+        return self._snapshot
+
+
+class FailingWifiCollector:
+    def collect(self) -> CurrentWifiSnapshot:
+        raise WifiCollectionError("Wi-Fi collection unavailable")
 
 
 def _interface() -> NetworkInterface:
@@ -173,4 +328,34 @@ def _interface() -> NetworkInterface:
         receive_link_speed_bps=1_000_000_000,
         transmit_link_speed_bps=1_000_000_000,
         is_hardware=True,
+    )
+
+
+def _wifi_interface(
+    state: int,
+    connection: WifiConnection | None = None,
+) -> WifiInterfaceSnapshot:
+    return WifiInterfaceSnapshot(
+        "aaaaaaaa-0000-0000-0000-000000000001",
+        "Sanitized wireless adapter",
+        WifiInterfaceState(state),
+        connection,
+    )
+
+
+def _wifi_connection(
+    ssid: WifiSsid | None = None,
+    phy_type: WifiPhyType | None = None,
+) -> WifiConnection:
+    return WifiConnection(
+        state=WifiInterfaceState(1),
+        mode=WifiConnectionMode(0),
+        profile_name="SANITIZED",
+        ssid=ssid or WifiSsid(b"SANITIZED"),
+        bssid=WifiBssid(bytes.fromhex("020000000011")),
+        phy_type=phy_type or WifiPhyType(8),
+        signal_quality=78,
+        receive_rate_kbps=866_700,
+        transmit_rate_kbps=433_300,
+        security=WifiSecurity(True, WifiAuthentication(6), WifiCipher(4)),
     )

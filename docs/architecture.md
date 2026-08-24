@@ -2,14 +2,14 @@
 
 ## Implemented architecture
 
-The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestone 1 adds the first vertical feature through four concrete layers:
+The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 and 2 provide vertical features through four concrete layers:
 
-- domain models normalize interface identity, type, state, MAC address, link properties, and optional driver metadata;
-- the application use case coordinates primary collection, optional enrichment, deterministic merge, warnings, and ordering;
-- Windows platform adapters isolate IP Helper ctypes structures and PowerShell JSON processing;
-- the CLI renders the normalized inventory without accessing native sources directly.
+- domain models normalize network-interface data and byte-safe current Wi-Fi connection data;
+- application use cases coordinate interface inventory, optional enrichment, Wi-Fi association by stable GUID, warnings, and deterministic ordering;
+- Windows platform adapters isolate IP Helper, Native WLAN API, and PowerShell boundaries;
+- the CLI renders normalized interface and current Wi-Fi views without accessing native sources directly.
 
-No WLAN connection, Wi-Fi discovery, host discovery, or reporting components exist yet.
+Nearby Wi-Fi discovery, network context, host discovery, and reporting components do not exist yet.
 
 ## Target boundaries
 
@@ -31,6 +31,8 @@ Directories are added only when a milestone has real code to place in them. The 
 ## Data source policy
 
 M1 uses `GetIfTable2` and `GetAdaptersAddresses` from IP Helper as primary structured sources. Their native records are copied into Python values before leaving the platform adapter. `Get-NetAdapter -IncludeHidden` supplies optional manufacturer, driver, hidden, and virtual metadata through explicitly selected properties serialized with `ConvertTo-Json`.
+
+M2 uses `WlanOpenHandle`, `WlanEnumInterfaces`, and `WlanQueryInterface` from the Native WLAN API. Handles are closed and API-allocated buffers are released on both successful and exceptional paths. SSIDs retain their explicit byte length and raw bytes; terminal-safe text is derived separately. Current WLAN interfaces are associated with M1 interfaces only by a matching stable GUID.
 
 PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
 
