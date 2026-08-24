@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wlanscope"
+version = "0.1.0.dev0"
+description = "Windows Wireless & Network Reconnaissance"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [
+    { name = "sasser" },
+]
+keywords = ["cybersecurity", "network-observability", "windows", "wireless"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: System :: Networking",
+]
+dependencies = [
+    "rich>=13.9,<16",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2,<2",
+    "mypy>=1.14,<2",
+    "pytest>=8.3,<10",
+    "pytest-cov>=6,<8",
+    "ruff>=0.9,<1",
+]
+
+[project.scripts]
+wlanscope = "wlanscope.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wlanscope"]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "--cov=wlanscope",
+    "--cov-branch",
+    "--cov-report=term-missing",
+]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["wlanscope"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "SIM", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+mypy_path = "src"
