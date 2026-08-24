@@ -31,6 +31,8 @@ The approved v1 scope also excludes port scanning and service exploitation.
 
 ## Sensitive output
 
+The current adapters command may display local interface names and MAC addresses in the terminal. It does not persist this inventory automatically.
+
 Future reports may contain internal hostnames, IP addresses, MAC addresses, SSIDs, BSSIDs, routes, adapter details, and other infrastructure metadata. Users must protect, retain, and share these reports according to their organization's data-handling requirements.
 
 Reports will be created only when explicitly requested and will not contain credentials or Wi-Fi secrets.
@@ -38,4 +40,3 @@ Reports will be created only when explicitly requested and will not contain cred
 ## Reporting vulnerabilities
 
 Security vulnerabilities should be reported privately to the project maintainer when a private reporting channel becomes available. Public reports should not include credentials, sensitive network captures, or identifying infrastructure data.
-

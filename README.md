@@ -6,7 +6,7 @@ WLANScope is a Windows-focused cybersecurity and network visibility project crea
 
 ## Project status
 
-WLANScope is in Milestone 0, Project Foundation. The current implementation provides an installable Python package, version metadata, and a minimal command-line entry point. Network collection, Wi-Fi analysis, device discovery, and reporting are planned work and are not implemented yet.
+WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces through structured operating-system sources. Wi-Fi connection analysis, device discovery, and reporting remain planned work and are not implemented yet.
 
 ## Requirements
 
@@ -28,11 +28,18 @@ python -m venv .venv
 ```powershell
 .\.venv\Scripts\wlanscope.exe --help
 .\.venv\Scripts\wlanscope.exe --version
+.\.venv\Scripts\wlanscope.exe adapters
 .\.venv\Scripts\python.exe -m wlanscope --help
 .\.venv\Scripts\python.exe -m wlanscope --version
 ```
 
-Only `--help` and `--version` are available in M0.
+Available behavior:
+
+- `--help` displays the supported command surface;
+- `--version` displays package metadata versioning;
+- `adapters` lists interfaces reported by Windows, with structured IP Helper data and optional PowerShell enrichment.
+
+The adapters command does not inspect the current Wi-Fi connection or scan nearby networks.
 
 ## Architecture direction
 
@@ -56,8 +63,9 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 
 ## Roadmap
 
-- M0: project foundation
-- M1-M3: Windows interfaces and current network context
+- M0: project foundation, completed
+- M1: Windows network interface inventory, implemented
+- M2-M3: current Wi-Fi and network context
 - M4-M5: nearby Wi-Fi discovery and details
 - M6-M7: bounded local device discovery and enrichment
 - M8: full scan orchestration
@@ -75,4 +83,3 @@ Licensed under the Apache License 2.0.
 ## Author
 
 sasser
-
