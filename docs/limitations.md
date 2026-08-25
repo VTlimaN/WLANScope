@@ -1,6 +1,6 @@
 # Limitations
 
-WLANScope currently inventories Windows network interfaces and inspects current Wi-Fi and IP/routing context. It does not yet inspect nearby networks or local devices.
+WLANScope currently inventories Windows network interfaces, inspects current Wi-Fi and IP/routing context, and discovers nearby Wi-Fi networks. It does not yet provide interactive network details or inspect local devices.
 
 The following limitations define the planned v1 scope:
 
@@ -8,6 +8,10 @@ The following limitations define the planned v1 scope:
 - Future device discovery will report devices observable from the local host, not every client connected to a router or access point.
 - Firewalls, wireless client isolation, VLAN boundaries, sleeping devices, routing policy, VPNs, and operating-system caches can reduce visibility.
 - Wi-Fi SSID and BSSID data may depend on Windows location settings, user consent, adapter state, WLAN service state, hardware, and driver support.
+- Nearby scans depend on radio and driver behavior. Windows may deny scan requests or withhold available-network and BSS data when location access is unavailable.
+- Hidden networks can expose an empty SSID, and their identity cannot be inferred from an empty value.
+- The radio environment can change between scan completion, available-network retrieval, and BSS-list retrieval, so nearby results are not atomic.
+- Observations made by different WLAN interfaces remain distinct and may report different signal, BSS, or availability data for the same environment.
 - Multiple WLAN interfaces are preserved, but connection details can become stale independently while collection is in progress.
 - The Native WLAN API may not expose every driver-specific radio or security detail.
 - Collectors may return partial results when a source is unavailable, unsupported, denied, or malformed.

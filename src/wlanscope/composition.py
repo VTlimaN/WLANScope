@@ -1,9 +1,11 @@
 from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
+from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
 from wlanscope.platform.windows.ip_configuration import WindowsIpConfigurationCollector
 from wlanscope.platform.windows.ip_helper import WindowsInterfaceCollector
 from wlanscope.platform.windows.native_wifi import NativeWifiCollector
+from wlanscope.platform.windows.native_wifi_scan import NativeNearbyWifiCollector
 from wlanscope.platform.windows.network_enrichment import (
     CimDhcpCollector,
     PowerShellNetworkCollector,
@@ -33,3 +35,7 @@ def create_inspect_current_network() -> InspectCurrentNetwork:
         interface_collector=WindowsInterfaceCollector(),
         wifi_collector=NativeWifiCollector(),
     )
+
+
+def create_scan_nearby_wifi() -> ScanNearbyWifi:
+    return ScanNearbyWifi(NativeNearbyWifiCollector())

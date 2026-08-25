@@ -8,7 +8,9 @@ from rich.text import Text
 from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
+from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
 from wlanscope.domain.interfaces import InterfaceCollectionError, NetworkInterface
+from wlanscope.domain.nearby_wifi import WifiNetwork
 from wlanscope.domain.network import (
     UNUSED_ROUTE_METRIC,
     CurrentNetworkSnapshot,
@@ -45,10 +47,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="List Windows network interfaces",
         description="List network interfaces reported by Windows.",
     )
-    subcommands.add_parser(
+    wifi_parser = subcommands.add_parser(
         "wifi",
         help="Inspect the current Wi-Fi connection",
         description="Inspect current Wi-Fi connection details reported by Windows.",
+    )
+    wifi_subcommands = wifi_parser.add_subparsers(dest="wifi_command")
+    wifi_subcommands.add_parser(
+        "scan",
+        help="Discover nearby Wi-Fi networks",
+        description="Discover nearby Wi-Fi networks and access points reported by Windows.",
     )
     subcommands.add_parser(
         "current",
@@ -62,6 +70,7 @@ def main(
     arguments: Sequence[str] | None = None,
     interface_use_case: ListNetworkInterfaces | None = None,
     wifi_use_case: InspectCurrentWifi | None = None,
+    nearby_wifi_use_case: ScanNearbyWifi | None = None,
     current_use_case: InspectCurrentNetwork | None = None,
     console: Console | None = None,
 ) -> int:
@@ -73,6 +82,11 @@ def main(
             console or Console(),
         )
     if parsed_arguments.command == "wifi":
+        if parsed_arguments.wifi_command == "scan":
+            return _scan_nearby_wifi(
+                nearby_wifi_use_case or _create_nearby_wifi_use_case(),
+                console or Console(),
+            )
         return _inspect_wifi(
             wifi_use_case or _create_wifi_use_case(),
             console or Console(),
@@ -95,6 +109,12 @@ def _create_wifi_use_case() -> InspectCurrentWifi:
     from wlanscope.composition import create_inspect_current_wifi
 
     return create_inspect_current_wifi()
+
+
+def _create_nearby_wifi_use_case() -> ScanNearbyWifi:
+    from wlanscope.composition import create_scan_nearby_wifi
+
+    return create_scan_nearby_wifi()
 
 
 def _create_current_use_case() -> InspectCurrentNetwork:
@@ -233,6 +253,57 @@ def _format_kilobits_per_second(value: int | None) -> str:
     megabits = value / 1_000
     precision = 0 if megabits.is_integer() else 1
     return f"{megabits:.{precision}f} Mbps"
+
+
+def _scan_nearby_wifi(use_case: ScanNearbyWifi, console: Console) -> int:
+    try:
+        snapshot = use_case.execute()
+    except WifiCollectionError as error:
+        console.print(f"[bold red]Error:[/bold red] {error}")
+        return 1
+
+    console.print(f"[bold]{PROJECT_NAME}[/bold]")
+    console.print("Nearby Wi-Fi Networks", style="dim")
+    if not snapshot.interfaces:
+        console.print("No Wi-Fi interfaces were reported by Windows.")
+    elif not snapshot.networks:
+        console.print("No nearby Wi-Fi networks were reported by Windows.")
+    else:
+        console.print(_create_nearby_wifi_table(snapshot.networks))
+    for issue in snapshot.issues:
+        console.print(f"[yellow]Warning:[/yellow] {issue.message}")
+    if snapshot.failed:
+        return 1
+    return 3 if snapshot.is_partial else 0
+
+
+def _create_nearby_wifi_table(networks: tuple[WifiNetwork, ...]) -> Table:
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("SSID", overflow="fold")
+    table.add_column("BSS", justify="right", no_wrap=True)
+    table.add_column("Signal", justify="right", no_wrap=True)
+    table.add_column("Band", no_wrap=True)
+    table.add_column("Security", overflow="fold")
+    table.add_column("Interface", overflow="fold")
+    for network in networks:
+        observed_count = len(network.access_points)
+        bss_count = observed_count or network.reported_bss_count
+        bands = "/".join(band.value for band in network.bands) or "Unknown"
+        if network.security_enabled is None:
+            security = "Unknown"
+        elif network.security_enabled:
+            security = f"{network.authentication.display_name} / {network.cipher.display_name}"
+        else:
+            security = "Open"
+        table.add_row(
+            Text(network.ssid.display_text or "<Hidden>"),
+            str(bss_count),
+            f"{network.best_signal_quality}%",
+            bands,
+            security,
+            Text(network.interface_description),
+        )
+    return table
 
 
 def _inspect_current_network(use_case: InspectCurrentNetwork, console: Console) -> int:

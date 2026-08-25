@@ -160,6 +160,50 @@ class NativeWlanBindings:
         ]
         self._query.restype = wintypes.DWORD
 
+        self._scan = library.WlanScan
+        self._scan.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_Guid),
+            wintypes.LPVOID,
+            wintypes.LPVOID,
+            wintypes.LPVOID,
+        ]
+        self._scan.restype = wintypes.DWORD
+
+        self._available_networks = library.WlanGetAvailableNetworkList
+        self._available_networks.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_Guid),
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        self._available_networks.restype = wintypes.DWORD
+
+        self._bss_list = library.WlanGetNetworkBssList
+        self._bss_list.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_Guid),
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.LPVOID,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        self._bss_list.restype = wintypes.DWORD
+
+        self._register_notification = library.WlanRegisterNotification
+        self._register_notification.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.BOOL,
+            ctypes.c_void_p,
+            wintypes.LPVOID,
+            wintypes.LPVOID,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self._register_notification.restype = wintypes.DWORD
+
         self._free = library.WlanFreeMemory
         self._free.argtypes = [wintypes.LPVOID]
         self._free.restype = None
@@ -201,6 +245,62 @@ class NativeWlanBindings:
 
     def free_memory(self, address: int) -> None:
         self._free(ctypes.c_void_p(address))
+
+    def scan(self, handle: int, interface_id: str) -> int:
+        guid = _guid_from_text(interface_id)
+        return int(
+            self._scan(
+                wintypes.HANDLE(handle),
+                ctypes.byref(guid),
+                None,
+                None,
+                None,
+            )
+        )
+
+    def get_available_networks(self, handle: int, interface_id: str) -> tuple[int, int]:
+        guid = _guid_from_text(interface_id)
+        address = ctypes.c_void_p()
+        result = self._available_networks(
+            wintypes.HANDLE(handle),
+            ctypes.byref(guid),
+            0,
+            None,
+            ctypes.byref(address),
+        )
+        return int(result), int(address.value or 0)
+
+    def get_bss_list(self, handle: int, interface_id: str) -> tuple[int, int]:
+        guid = _guid_from_text(interface_id)
+        address = ctypes.c_void_p()
+        result = self._bss_list(
+            wintypes.HANDLE(handle),
+            ctypes.byref(guid),
+            None,
+            3,
+            False,
+            None,
+            ctypes.byref(address),
+        )
+        return int(result), int(address.value or 0)
+
+    def register_notification(
+        self,
+        handle: int,
+        source: int,
+        callback_address: int,
+    ) -> tuple[int, int]:
+        previous_source = wintypes.DWORD()
+        result = self._register_notification(
+            wintypes.HANDLE(handle),
+            source,
+            True,
+            ctypes.c_void_p(callback_address),
+            None,
+            None,
+            ctypes.byref(previous_source),
+        )
+        return int(result), int(previous_source.value)
 
 
 @dataclass(frozen=True, slots=True)

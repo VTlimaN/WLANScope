@@ -1,0 +1,242 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+from wlanscope.domain.interfaces import normalize_stable_id
+from wlanscope.domain.wifi import (
+    WifiAuthentication,
+    WifiBssid,
+    WifiCipher,
+    WifiPhyType,
+    WifiSsid,
+)
+
+
+class WifiBand(Enum):
+    BAND_2_4_GHZ = "2.4 GHz"
+    BAND_5_GHZ = "5 GHz"
+    BAND_6_GHZ = "6 GHz"
+    OTHER = "Other"
+
+
+def wifi_band_from_frequency(center_frequency_khz: int) -> WifiBand:
+    frequency_mhz = center_frequency_khz / 1_000
+    if 2_400 <= frequency_mhz <= 2_500:
+        return WifiBand.BAND_2_4_GHZ
+    if 4_900 <= frequency_mhz <= 5_900:
+        return WifiBand.BAND_5_GHZ
+    if 5_925 <= frequency_mhz <= 7_125:
+        return WifiBand.BAND_6_GHZ
+    return WifiBand.OTHER
+
+
+_FIVE_GHZ_CHANNELS = frozenset(
+    {
+        32,
+        34,
+        36,
+        38,
+        40,
+        42,
+        44,
+        46,
+        48,
+        52,
+        56,
+        60,
+        64,
+        100,
+        104,
+        108,
+        112,
+        116,
+        120,
+        124,
+        128,
+        132,
+        136,
+        140,
+        144,
+        149,
+        153,
+        157,
+        161,
+        165,
+        169,
+        173,
+        177,
+    }
+)
+
+
+def wifi_channel_from_frequency(center_frequency_khz: int) -> int | None:
+    if center_frequency_khz % 1_000:
+        return None
+    frequency_mhz = center_frequency_khz // 1_000
+    if frequency_mhz == 2_484:
+        return 14
+    if 2_412 <= frequency_mhz <= 2_472 and (frequency_mhz - 2_407) % 5 == 0:
+        return (frequency_mhz - 2_407) // 5
+    if (frequency_mhz - 5_000) % 5 == 0:
+        channel = (frequency_mhz - 5_000) // 5
+        if channel in _FIVE_GHZ_CHANNELS:
+            return channel
+    if frequency_mhz == 5_935:
+        return 2
+    if 5_955 <= frequency_mhz <= 7_115 and (frequency_mhz - 5_955) % 20 == 0:
+        return 1 + (frequency_mhz - 5_955) // 5
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class WifiAccessPoint:
+    interface_id: str
+    ssid: WifiSsid
+    bssid: WifiBssid
+    phy_type: WifiPhyType
+    signal_quality: int
+    rssi_dbm: int
+    center_frequency_khz: int
+    beacon_period_tu: int | None = None
+    capability_information: int | None = None
+    timestamp_us: int | None = None
+    host_timestamp: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "interface_id", normalize_stable_id(self.interface_id))
+        if not 0 <= self.signal_quality <= 100:
+            raise ValueError("Signal quality must be between 0 and 100")
+        if self.center_frequency_khz <= 0:
+            raise ValueError("Center frequency must be positive")
+        for value, name in (
+            (self.beacon_period_tu, "Beacon period"),
+            (self.capability_information, "Capability information"),
+            (self.timestamp_us, "Timestamp"),
+            (self.host_timestamp, "Host timestamp"),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(f"{name} cannot be negative")
+
+    @property
+    def band(self) -> WifiBand:
+        return wifi_band_from_frequency(self.center_frequency_khz)
+
+    @property
+    def channel(self) -> int | None:
+        return wifi_channel_from_frequency(self.center_frequency_khz)
+
+
+@dataclass(frozen=True, slots=True)
+class AvailableWifiNetwork:
+    interface_id: str
+    ssid: WifiSsid
+    connectable: bool
+    profile_name: str | None
+    signal_quality: int
+    security_enabled: bool
+    authentication: WifiAuthentication
+    cipher: WifiCipher
+    reported_bss_count: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "interface_id", normalize_stable_id(self.interface_id))
+        if not 0 <= self.signal_quality <= 100:
+            raise ValueError("Signal quality must be between 0 and 100")
+        if self.reported_bss_count < 0:
+            raise ValueError("Reported BSS count cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class WifiNetwork:
+    interface_id: str
+    interface_description: str
+    ssid: WifiSsid
+    connectable: bool
+    profile_name: str | None
+    signal_quality: int
+    security_enabled: bool | None
+    authentication: WifiAuthentication
+    cipher: WifiCipher
+    reported_bss_count: int
+    access_points: tuple[WifiAccessPoint, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "interface_id", normalize_stable_id(self.interface_id))
+        if not self.interface_description.strip():
+            raise ValueError("Wi-Fi interface description cannot be empty")
+        if not 0 <= self.signal_quality <= 100:
+            raise ValueError("Signal quality must be between 0 and 100")
+        if self.reported_bss_count < 0:
+            raise ValueError("Reported BSS count cannot be negative")
+        if any(
+            access_point.interface_id != self.interface_id for access_point in self.access_points
+        ):
+            raise ValueError("Access points must originate from the same Wi-Fi interface")
+        if any(access_point.ssid != self.ssid for access_point in self.access_points):
+            raise ValueError("Access points must belong to the same SSID")
+
+    @property
+    def best_signal_quality(self) -> int:
+        return max(
+            (access_point.signal_quality for access_point in self.access_points),
+            default=self.signal_quality,
+        )
+
+    @property
+    def bands(self) -> tuple[WifiBand, ...]:
+        observed = {access_point.band for access_point in self.access_points}
+        return tuple(sorted(observed, key=lambda band: band.value))
+
+
+class WifiScanIssueCode(Enum):
+    ACCESS_DENIED = "Access denied"
+    TIMEOUT = "Scan timeout"
+    SCAN_FAILED = "Scan failed"
+    AVAILABLE_NETWORKS_FAILED = "Available networks unavailable"
+    BSS_LIST_FAILED = "BSS list unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class WifiScanIssue:
+    code: WifiScanIssueCode
+    message: str
+    interface_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NearbyWifiInterface:
+    interface_id: str
+    description: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "interface_id", normalize_stable_id(self.interface_id))
+        if not self.description.strip():
+            raise ValueError("Wi-Fi interface description cannot be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class NativeNearbyWifiData:
+    interfaces: tuple[NearbyWifiInterface, ...]
+    available_networks: tuple[AvailableWifiNetwork, ...]
+    access_points: tuple[WifiAccessPoint, ...]
+    issues: tuple[WifiScanIssue, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class NearbyWifiSnapshot:
+    interfaces: tuple[NearbyWifiInterface, ...]
+    networks: tuple[WifiNetwork, ...]
+    issues: tuple[WifiScanIssue, ...] = ()
+
+    @property
+    def is_partial(self) -> bool:
+        return bool(self.issues) and bool(self.networks)
+
+    @property
+    def failed(self) -> bool:
+        return bool(self.issues) and not self.networks
+
+
+class WifiScanTimeoutError(RuntimeError):
+    pass

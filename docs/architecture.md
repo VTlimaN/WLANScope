@@ -2,14 +2,14 @@
 
 ## Implemented architecture
 
-The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 through 3 provide vertical features through four concrete layers:
+The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 through 4 provide vertical features through four concrete layers:
 
-- domain models normalize network-interface, byte-safe current Wi-Fi, IP assignment, DNS, DHCP, and route data;
+- domain models normalize network-interface, byte-safe current and nearby Wi-Fi, IP assignment, DNS, DHCP, and route data;
 - application use cases coordinate interface inventory, optional enrichment, stable association, partial failures, and deterministic ordering;
 - Windows platform adapters isolate IP Helper, Native WLAN API, PowerShell JSON, and optional CIM boundaries;
-- the CLI renders normalized interface, current Wi-Fi, and current network views without accessing native sources directly.
+- the CLI renders normalized interface, current Wi-Fi, nearby Wi-Fi, and current network views without accessing native sources directly.
 
-Nearby Wi-Fi discovery, host discovery, and reporting components do not exist yet.
+Detailed nearby-network navigation, host discovery, and reporting components do not exist yet.
 
 ## Target boundaries
 
@@ -37,6 +37,10 @@ M2 uses `WlanOpenHandle`, `WlanEnumInterfaces`, and `WlanQueryInterface` from th
 M3 uses `GetUnicastIpAddressTable` and `GetIpForwardTable2` for primary IPv4/IPv6 assignments and routes. `GetAdaptersAddresses` supplies structured DNS ordering, interface metrics, DNS suffixes, DHCP state, and DHCP server data. Every MIB table is released with `FreeMibTable`. PowerShell networking cmdlets provide structured JSON fallback data, while `Win32_NetworkAdapterConfiguration` is isolated as optional DHCP enrichment.
 
 Default gateways are derived only from `0.0.0.0/0` and `::/0` routes. Route and interface metrics remain separate; their sum is exposed only when both components are known. Concurrent defaults, including VPN routes, are preserved and preference remains unknown when metrics are missing or tied.
+
+M4 reuses the Native WLAN handle and interface enumeration boundaries, requests scans with `WlanScan`, and waits for interface-specific ACM completion or failure notifications registered through `WlanRegisterNotification`. Registration is removed on successful, failed, and timed-out paths, and every wait has a fixed upper bound. `WlanGetAvailableNetworkList` supplies aggregate network and security metadata while `WlanGetNetworkBssList` supplies distinct access-point observations. Both API-owned lists are released with `WlanFreeMemory`.
+
+Available networks and BSS observations remain separate until application orchestration groups them by byte-safe SSID and stable WLAN interface identity. Exact duplicate observations use a deterministic identity that includes interface, SSID, BSSID, and center frequency. Frequency remains stored in kHz; pure domain functions derive band and a channel only for recognized 2.4, 5, and 6 GHz frequencies.
 
 PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
 

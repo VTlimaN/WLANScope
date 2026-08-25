@@ -10,6 +10,7 @@ from wlanscope.domain.interfaces import (
     NetworkInterface,
     OperationalState,
 )
+from wlanscope.domain.nearby_wifi import NearbyWifiSnapshot, WifiAccessPoint, WifiNetwork
 from wlanscope.domain.network import CurrentNetworkSnapshot, IpAddressAssignment, Route
 from wlanscope.domain.wifi import CurrentWifiSnapshot, WifiConnection, WifiInterfaceSnapshot
 
@@ -25,9 +26,12 @@ __all__ = (
     "IpAddressAssignment",
     "MacAddress",
     "MediaState",
+    "NearbyWifiSnapshot",
     "NetworkInterface",
     "OperationalState",
     "Route",
+    "WifiAccessPoint",
     "WifiConnection",
     "WifiInterfaceSnapshot",
+    "WifiNetwork",
 )
