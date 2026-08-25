@@ -1,4 +1,5 @@
 from wlanscope.domain.discovery import DeviceInventory, DiscoveredHost, DiscoveryPlan
+from wlanscope.domain.enrichment import EnrichedDeviceInventory, EnrichedHost
 from wlanscope.domain.interfaces import (
     AdapterEnrichment,
     AdministrativeState,
@@ -23,6 +24,8 @@ __all__ = (
     "DeviceInventory",
     "DiscoveredHost",
     "DiscoveryPlan",
+    "EnrichedDeviceInventory",
+    "EnrichedHost",
     "InterfaceCollectionError",
     "InterfaceEnrichmentError",
     "InterfaceInventory",

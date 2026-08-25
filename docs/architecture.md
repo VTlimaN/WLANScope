@@ -2,14 +2,14 @@
 
 ## Implemented architecture
 
-The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 through 6 provide vertical features through four concrete layers:
+The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 through 7 provide vertical features through four concrete layers:
 
 - domain models normalize network-interface, byte-safe current and nearby Wi-Fi, IP assignment, DNS, DHCP, route, neighbor, and discovered-host data;
-- application use cases coordinate interface inventory, optional enrichment, stable association, bounded local discovery, partial failures, and deterministic ordering;
+- application use cases coordinate interface inventory, stable association, bounded local discovery, device enrichment, partial failures, and deterministic ordering;
 - Windows platform adapters isolate IP Helper, Native WLAN API, PowerShell JSON, and optional CIM boundaries;
 - the CLI renders normalized interface, current Wi-Fi, nearby Wi-Fi, current network, and observed-host views without accessing native sources directly.
 
-Device enrichment and reporting components do not exist yet.
+Full scan orchestration and reporting components do not exist yet.
 
 ## Target boundaries
 
@@ -51,6 +51,10 @@ M6 consumes the preferred IPv4 routing context from M3 and chooses a subnet only
 `GetIpNetTable2` captures IPv4 ARP and IPv6 Neighbor Discovery state before and after active probing, with API-owned memory released through `FreeMibTable`. IPv4 Echo probes use `IcmpCreateFile`, synchronous `IcmpSendEcho2` calls with a 750 ms bound, and `IcmpCloseHandle`. A bounded `ThreadPoolExecutor` uses at most 32 workers. IPv6 is never enumerated for probing.
 
 Host identity is the interface and IP pair. Merge policy preserves self, gateway, neighbor-cache, and ICMP-response provenance independently, enriches a known host with a later MAC observation, and never treats ICMP silence as proof that a host is offline. Failures in a neighbor snapshot or ICMP boundary retain other evidence as a partial inventory.
+
+M7 runs only after M6 has produced its observed-host inventory. `EnrichDeviceInventory` wraps each unchanged discovered host with independent hostname and vendor outcomes; it never selects targets or invokes discovery. PTR queries use dnspython with a 750 ms per-query timeout, a 1.5 second lifetime, and at most 16 concurrent workers. IPv4 and already-observed IPv6 addresses are eligible. No PTR, timeout, and resolver failure remain distinct, and only systemic resolver failure produces a global issue.
+
+Vendor lookup is local and optional. One IEEE public MA-L CSV export is loaded once per execution from the user data directory, and only validated 24-bit assignments participate in lookup. The project does not bundle or update the registry because upstream redistribution rights were not sufficiently explicit for repository inclusion. Missing registries and unknown prefixes are normal per-host outcomes; malformed registries are systemic issues. Locally administered, multicast, absent, and invalid MAC addresses are never attributed to a global vendor. Discovery provenance and enrichment provenance use separate types.
 
 PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
 

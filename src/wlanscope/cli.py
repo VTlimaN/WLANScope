@@ -7,6 +7,7 @@ from rich.table import Table
 from rich.text import Text
 
 from wlanscope.application.discover_local_devices import DiscoverLocalDevices
+from wlanscope.application.enrich_device_inventory import EnrichDeviceInventory
 from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.inspect_nearby_wifi import (
@@ -19,11 +20,15 @@ from wlanscope.application.inspect_nearby_wifi import (
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
 from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
 from wlanscope.domain.discovery import (
-    DeviceInventory,
     DiscoveryError,
     DiscoverySource,
     RangeAuthorizationRequiredError,
     ReachabilityState,
+)
+from wlanscope.domain.enrichment import (
+    EnrichedDeviceInventory,
+    HostnameResolutionState,
+    VendorResolutionState,
 )
 from wlanscope.domain.interfaces import InterfaceCollectionError, NetworkInterface
 from wlanscope.domain.nearby_wifi import WifiAccessPoint, WifiNetwork
@@ -112,6 +117,7 @@ def main(
     nearby_wifi_detail_use_case: InspectNearbyWifiNetwork | None = None,
     current_use_case: InspectCurrentNetwork | None = None,
     devices_use_case: DiscoverLocalDevices | None = None,
+    device_enrichment_use_case: EnrichDeviceInventory | None = None,
     console: Console | None = None,
 ) -> int:
     parser = build_parser()
@@ -149,6 +155,7 @@ def main(
     if parsed_arguments.command == "devices":
         return _discover_devices(
             devices_use_case or _create_devices_use_case(),
+            device_enrichment_use_case or _create_device_enrichment_use_case(),
             parsed_arguments.allow_large_range,
             console or Console(),
         )
@@ -185,14 +192,22 @@ def _create_devices_use_case() -> DiscoverLocalDevices:
     return create_discover_local_devices()
 
 
+def _create_device_enrichment_use_case() -> EnrichDeviceInventory:
+    from wlanscope.composition import create_enrich_device_inventory
+
+    return create_enrich_device_inventory()
+
+
 def _discover_devices(
     use_case: DiscoverLocalDevices,
+    enrichment_use_case: EnrichDeviceInventory,
     allow_large_range: bool,
     console: Console,
 ) -> int:
     cancellation = Event()
     try:
         inventory = use_case.execute(allow_large_range, cancellation)
+        enriched = enrichment_use_case.execute(inventory, cancellation)
     except KeyboardInterrupt:
         cancellation.set()
         console.print("[yellow]Local subnet discovery canceled.[/yellow]")
@@ -210,8 +225,8 @@ def _discover_devices(
         console.print(
             "[yellow]Warning:[/yellow] Explicitly authorized discovery of a large local range."
         )
-    console.print(_create_device_table(inventory))
-    _render_device_summary(inventory, console)
+    console.print(_create_device_table(enriched, console.width))
+    _render_device_summary(enriched, console)
     for issue in inventory.issues:
         console.print(
             Text.assemble(
@@ -221,32 +236,66 @@ def _discover_devices(
                 Text(issue.message),
             )
         )
+    for enrichment_issue in enriched.issues:
+        console.print(
+            Text.assemble(
+                ("Warning (", "yellow"),
+                Text(enrichment_issue.source, style="yellow"),
+                ("): ", "yellow"),
+                Text(enrichment_issue.message),
+            )
+        )
     if inventory.canceled:
         return 130
-    return 3 if inventory.is_partial else 0
+    return 3 if enriched.is_partial else 0
 
 
-def _create_device_table(inventory: DeviceInventory) -> Table:
+def _create_device_table(inventory: EnrichedDeviceInventory, terminal_width: int) -> Table:
     table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
     table.add_column("IP", no_wrap=True)
-    table.add_column("MAC", no_wrap=True)
+    table.add_column("Hostname", overflow="fold")
+    table.add_column("Vendor", overflow="fold")
     table.add_column("State", no_wrap=True)
-    table.add_column("Sources", overflow="fold")
+    compact = terminal_width < 100
+    if not compact:
+        table.add_column("MAC", no_wrap=True)
+        table.add_column("Sources", overflow="fold")
     for host in inventory.hosts:
         sources = ", ".join(
             _format_discovery_source(source)
-            for source in sorted(host.sources, key=lambda item: item.value)
+            for source in sorted(host.discovered.sources, key=lambda item: item.value)
         )
-        state = host.reachability.value
-        if host.reachability is ReachabilityState.NOT_PROBED and host.neighbor_state is not None:
-            state = host.neighbor_state.display_name
-        table.add_row(
-            str(host.address),
-            str(host.mac_address) if host.mac_address is not None else "Unknown",
+        state = host.discovered.reachability.value
+        if (
+            host.discovered.reachability is ReachabilityState.NOT_PROBED
+            and host.discovered.neighbor_state is not None
+        ):
+            state = host.discovered.neighbor_state.display_name
+        row: list[str | Text] = [
+            str(host.discovered.address),
+            Text(_hostname_display(host.hostname.state, host.hostname.hostname)),
+            Text(_vendor_display(host.vendor.state, host.vendor.vendor)),
             state,
-            sources,
-        )
+        ]
+        if not compact:
+            row.extend(
+                (
+                    str(host.discovered.mac_address)
+                    if host.discovered.mac_address is not None
+                    else "Unknown",
+                    sources,
+                )
+            )
+        table.add_row(*row)
     return table
+
+
+def _hostname_display(state: HostnameResolutionState, hostname: str | None) -> str:
+    return hostname if state is HostnameResolutionState.RESOLVED and hostname else state.value
+
+
+def _vendor_display(state: VendorResolutionState, vendor: str | None) -> str:
+    return vendor if state is VendorResolutionState.RESOLVED and vendor else state.value
 
 
 def _format_discovery_source(source: DiscoverySource) -> str:
@@ -259,17 +308,23 @@ def _format_discovery_source(source: DiscoverySource) -> str:
     return labels[source]
 
 
-def _render_device_summary(inventory: DeviceInventory, console: Console) -> None:
-    responded = sum(host.reachability is ReachabilityState.RESPONDED for host in inventory.hosts)
+def _render_device_summary(inventory: EnrichedDeviceInventory, console: Console) -> None:
+    discovered = inventory.discovered
+    responded = sum(host.reachability is ReachabilityState.RESPONDED for host in discovered.hosts)
     neighbor_only = sum(
-        host.sources == frozenset({DiscoverySource.NEIGHBOR_CACHE}) for host in inventory.hosts
+        host.sources == frozenset({DiscoverySource.NEIGHBOR_CACHE}) for host in discovered.hosts
     )
-    console.print(f"Subnet: {inventory.plan.subnet}")
-    console.print(f"Targets considered: {len(inventory.plan.targets)}")
-    console.print(f"Probes executed: {inventory.probes_executed}")
-    console.print(f"Observed hosts: {len(inventory.hosts)}")
+    console.print(f"Subnet: {discovered.plan.subnet}")
+    console.print(f"Targets considered: {len(discovered.plan.targets)}")
+    console.print(f"Probes executed: {discovered.probes_executed}")
+    console.print(f"Observed hosts: {len(discovered.hosts)}")
     console.print(f"ICMP responses: {responded}")
     console.print(f"Neighbor-only observations: {neighbor_only}")
+    console.print(f"PTR resolved: {inventory.ptr_resolved_count}/{inventory.ptr_attempted_count}")
+    console.print(
+        f"Vendors resolved: {inventory.vendor_resolved_count}/{inventory.vendor_attempted_count}"
+    )
+    console.print(f"Locally administered MACs: {inventory.locally_administered_count}")
 
 
 def _list_adapters(use_case: ListNetworkInterfaces, console: Console) -> int:

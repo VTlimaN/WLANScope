@@ -6,7 +6,7 @@ WLANScope is a Windows-focused cybersecurity and network visibility project crea
 
 ## Project status
 
-WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, discovers and details nearby Wi-Fi networks, and performs bounded discovery of hosts observable on the routed local subnet. Device enrichment and reporting remain planned work and are not implemented yet.
+WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, discovers and details nearby Wi-Fi networks, and performs bounded discovery and enrichment of hosts observable on the routed local subnet. Full scan orchestration and reporting remain planned work and are not implemented yet.
 
 ## Requirements
 
@@ -50,12 +50,14 @@ Available behavior:
 - `wifi scan --details NETWORK` selects a one-based network index from that scan and shows aggregate and BSS details.
 - `wifi scan --details NETWORK --access-point AP` shows the selected access point from the same snapshot without rescanning.
 - `current` presents the current IP assignments, default routes, metrics, DNS, and DHCP context.
-- `devices` observes the local IPv4 subnet selected from routing context by combining the host, gateway, Windows neighbor cache, and bounded native ICMP Echo probes.
+- `devices` observes the local IPv4 subnet selected from routing context by combining the host, gateway, Windows neighbor cache, and bounded native ICMP Echo probes. It then attempts PTR resolution for observed hosts and local OUI lookup for usable MAC addresses.
 - `devices --allow-large-range` explicitly authorizes local discovery for ranges containing 257 through 4,096 usable addresses. Larger ranges are refused.
 
 The Wi-Fi commands do not retrieve profile XML, collect credentials, connect to networks, or modify wireless state.
 
 Device discovery reports observed hosts, not an authoritative list of clients connected to a router. Firewalls, client isolation, sleeping devices, and stale or incomplete neighbor state can limit visibility. IPv6 neighbor entries can be observed, but WLANScope does not sweep IPv6 address space.
+
+PTR names and vendor names are optional enrichment and may be unavailable. Vendor lookup performs no online request during discovery. WLANScope can read an IEEE public MA-L CSV export from `%LOCALAPPDATA%\WLANScope\data\oui.csv` when the file contains the `Registry`, `Assignment`, and `Organization Name` columns. No OUI registry is bundled because WLANScope does not assert redistribution rights for the upstream dataset. This milestone supports 24-bit MA-L assignments only.
 
 ## Architecture direction
 
@@ -86,7 +88,7 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M4: nearby Wi-Fi discovery, implemented
 - M5: nearby Wi-Fi details, implemented
 - M6: bounded local subnet discovery, implemented
-- M7: device inventory enrichment
+- M7: device inventory enrichment, implemented
 - M8: full scan orchestration
 - M9: TXT, JSON, and CSV reporting
 - M10: CLI polish and reliability

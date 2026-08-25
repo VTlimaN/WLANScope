@@ -28,6 +28,7 @@ classifiers = [
     "Topic :: System :: Networking",
 ]
 dependencies = [
+    "dnspython>=2.7,<3",
     "rich>=13.9,<16",
 ]
 

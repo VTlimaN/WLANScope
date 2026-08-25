@@ -1,8 +1,11 @@
 from wlanscope.application.discover_local_devices import DiscoverLocalDevices
+from wlanscope.application.enrich_device_inventory import EnrichDeviceInventory
 from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
 from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
+from wlanscope.platform.dns import DnsPtrResolver
+from wlanscope.platform.vendor_registry import LocalOuiVendorResolver
 from wlanscope.platform.windows.icmp import NativeIcmpProbeService
 from wlanscope.platform.windows.ip_configuration import WindowsIpConfigurationCollector
 from wlanscope.platform.windows.ip_helper import WindowsInterfaceCollector
@@ -49,4 +52,11 @@ def create_discover_local_devices() -> DiscoverLocalDevices:
         current_network=create_inspect_current_network(),
         neighbor_collector=WindowsNeighborCollector(),
         probe_service=NativeIcmpProbeService(),
+    )
+
+
+def create_enrich_device_inventory() -> EnrichDeviceInventory:
+    return EnrichDeviceInventory(
+        hostname_resolver=DnsPtrResolver(),
+        vendor_resolver=LocalOuiVendorResolver(),
     )

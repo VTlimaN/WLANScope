@@ -20,6 +20,8 @@ Current network analysis is read-only. WLANScope does not create or remove addre
 
 Local device discovery is confined to the IPv4 subnet selected from the host's default routing context. It reads the Windows neighbor cache and sends only bounded ICMP Echo requests. It does not accept arbitrary target CIDRs. Ranges above 256 usable addresses require an explicit command-line authorization, and ranges above 4,096 are refused. IPv6 is not swept.
 
+Device enrichment sends PTR queries only for hosts already observed by local discovery. It does not brute-force DNS names, enumerate zones, use NetBIOS, LLMNR, or mDNS, or initiate service discovery. Vendor lookup reads an optional local registry once per execution and never calls an external MAC service for each host.
+
 ## Prohibited capabilities
 
 WLANScope will not implement:
@@ -40,7 +42,7 @@ The approved v1 scope also excludes port scanning and service exploitation.
 
 ## Sensitive output
 
-The adapters and Wi-Fi commands may display local interface names, MAC addresses, SSIDs, BSSIDs, security metadata, and profile names in the terminal. They do not persist this information automatically and never request profile key material or credentials.
+The adapters, Wi-Fi, and devices commands may display local interface names, MAC addresses, SSIDs, BSSIDs, security metadata, profile names, PTR hostnames, and vendor organizations in the terminal. They do not persist this information automatically and never request profile key material or credentials.
 
 Future reports may contain internal hostnames, IP addresses, prefixes, gateways, DNS and DHCP servers, MAC addresses, SSIDs, BSSIDs, routes, adapter details, and other infrastructure topology metadata. Users must protect, retain, and share these reports according to their organization's data-handling requirements.
 

@@ -1,6 +1,6 @@
 # Limitations
 
-WLANScope currently inventories Windows network interfaces, inspects current Wi-Fi and IP/routing context, discovers and details nearby Wi-Fi networks, and observes hosts on the routed local IPv4 subnet. It does not yet enrich devices with names or vendors or provide a full-screen interactive terminal interface.
+WLANScope currently inventories Windows network interfaces, inspects current Wi-Fi and IP/routing context, discovers and details nearby Wi-Fi networks, and observes and enriches hosts on the routed local IPv4 subnet. It does not provide a full-screen interactive terminal interface.
 
 The following limitations define the planned v1 scope:
 
@@ -30,6 +30,11 @@ The following limitations define the planned v1 scope:
 - Wireless client isolation, sleeping devices, VLAN boundaries, and stale or incomplete neighbor-cache entries can hide hosts or retain observations that are no longer current.
 - Active discovery is limited to the routed local IPv4 subnet. IPv6 address spaces are not swept; only IPv6 neighbors already exposed by Windows are included.
 - Local IPv4 ranges with more than 256 usable addresses require explicit authorization, and ranges above 4,096 are refused in v1.0.
+- PTR records are optional, can be absent or stale, and identify DNS names rather than NetBIOS, mDNS, LLMNR, or DHCP names.
+- Vendor enrichment requires a user-provided local IEEE MA-L CSV registry. The project does not bundle the registry, and the local copy can be absent, incomplete, or outdated.
+- The current vendor lookup covers 24-bit MA-L assignments only. Unknown prefixes and valid assignments of other sizes remain unavailable.
+- Locally administered and randomized MAC addresses are deliberately not attributed to a global organization.
+- An OUI organization identifies an address assignment holder; it does not prove device type, model, operating system, ownership, or current manufacturer.
 - WLANScope will not provide offensive wireless operations, credential access, exploitation, packet manipulation, or access-control bypass.
 
 These constraints will be presented with scan results where they materially affect interpretation.
