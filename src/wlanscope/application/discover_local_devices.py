@@ -63,9 +63,10 @@ class DiscoverLocalDevices:
         self,
         allow_large_range: bool = False,
         cancel_event: Event | None = None,
+        network_snapshot: CurrentNetworkSnapshot | None = None,
     ) -> DeviceInventory:
         cancellation = cancel_event or Event()
-        snapshot = self._current_network.execute()
+        snapshot = network_snapshot or self._current_network.execute()
         plan = create_discovery_plan(
             snapshot,
             allow_large_range,

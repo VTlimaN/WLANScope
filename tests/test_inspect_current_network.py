@@ -138,6 +138,22 @@ def test_wifi_privacy_issue_is_preserved_as_partial() -> None:
     assert result.issues[0].source is NetworkIssueSource.WIFI_ASSOCIATION
 
 
+def test_supplied_associations_avoid_duplicate_interface_and_wifi_collection() -> None:
+    interface = _network_interface()
+    wifi = CurrentWifiSnapshot((_wifi_interface(),))
+    use_case = InspectCurrentNetwork(
+        StaticPrimaryCollector(_native_data()),
+        interface_collector=FailingInterfaceCollector(),
+        wifi_collector=FailingWifiCollector(),
+    )
+
+    result = use_case.execute_with_associations((interface,), wifi)
+
+    assert result.interfaces[0].network_interface is interface
+    assert result.interfaces[0].wifi_interface is wifi.interfaces[0]
+    assert not result.is_partial
+
+
 class StaticPrimaryCollector:
     def __init__(self, data: NativeNetworkData) -> None:
         self._data = data

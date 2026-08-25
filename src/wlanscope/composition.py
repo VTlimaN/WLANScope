@@ -3,6 +3,7 @@ from wlanscope.application.enrich_device_inventory import EnrichDeviceInventory
 from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
+from wlanscope.application.run_full_network_scan import RunFullNetworkScan
 from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
 from wlanscope.platform.dns import DnsPtrResolver
 from wlanscope.platform.vendor_registry import LocalOuiVendorResolver
@@ -47,9 +48,11 @@ def create_scan_nearby_wifi() -> ScanNearbyWifi:
     return ScanNearbyWifi(NativeNearbyWifiCollector())
 
 
-def create_discover_local_devices() -> DiscoverLocalDevices:
+def create_discover_local_devices(
+    current_network: InspectCurrentNetwork | None = None,
+) -> DiscoverLocalDevices:
     return DiscoverLocalDevices(
-        current_network=create_inspect_current_network(),
+        current_network=current_network or create_inspect_current_network(),
         neighbor_collector=WindowsNeighborCollector(),
         probe_service=NativeIcmpProbeService(),
     )
@@ -59,4 +62,18 @@ def create_enrich_device_inventory() -> EnrichDeviceInventory:
     return EnrichDeviceInventory(
         hostname_resolver=DnsPtrResolver(),
         vendor_resolver=LocalOuiVendorResolver(),
+    )
+
+
+def create_run_full_network_scan() -> RunFullNetworkScan:
+    interfaces = create_list_network_interfaces()
+    current_wifi = create_inspect_current_wifi()
+    current_network = create_inspect_current_network()
+    return RunFullNetworkScan(
+        interfaces=interfaces,
+        current_wifi=current_wifi,
+        current_network=current_network,
+        nearby_wifi=create_scan_nearby_wifi(),
+        devices=create_discover_local_devices(current_network),
+        enrichment=create_enrich_device_inventory(),
     )

@@ -2,14 +2,14 @@
 
 ## Implemented architecture
 
-The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 through 7 provide vertical features through four concrete layers:
+The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 through 8 provide vertical features through four concrete layers:
 
 - domain models normalize network-interface, byte-safe current and nearby Wi-Fi, IP assignment, DNS, DHCP, route, neighbor, and discovered-host data;
 - application use cases coordinate interface inventory, stable association, bounded local discovery, device enrichment, partial failures, and deterministic ordering;
 - Windows platform adapters isolate IP Helper, Native WLAN API, PowerShell JSON, and optional CIM boundaries;
 - the CLI renders normalized interface, current Wi-Fi, nearby Wi-Fi, current network, and observed-host views without accessing native sources directly.
 
-Full scan orchestration and reporting components do not exist yet.
+Persistent reporting components do not exist yet.
 
 ## Target boundaries
 
@@ -55,6 +55,12 @@ Host identity is the interface and IP pair. Merge policy preserves self, gateway
 M7 runs only after M6 has produced its observed-host inventory. `EnrichDeviceInventory` wraps each unchanged discovered host with independent hostname and vendor outcomes; it never selects targets or invokes discovery. PTR queries use dnspython with a 750 ms per-query timeout, a 1.5 second lifetime, and at most 16 concurrent workers. IPv4 and already-observed IPv6 addresses are eligible. No PTR, timeout, and resolver failure remain distinct, and only systemic resolver failure produces a global issue.
 
 Vendor lookup is local and optional. One IEEE public MA-L CSV export is loaded once per execution from the user data directory, and only validated 24-bit assignments participate in lookup. The project does not bundle or update the registry because upstream redistribution rights were not sufficiently explicit for repository inclusion. Missing registries and unknown prefixes are normal per-host outcomes; malformed registries are systemic issues. Locally administered, multicast, absent, and invalid MAC addresses are never attributed to a global vendor. Discovery provenance and enrichment provenance use separate types.
+
+M8 adds `RunFullNetworkScan`, a sequential application orchestrator over the existing M1 through M7 use cases. Execution order is adapters, current Wi-Fi, current network, nearby Wi-Fi, local devices, then device enrichment. M5 detail selection is not invoked because the nearby snapshot already contains the summary data required by the full scan.
+
+Results flow forward within one execution. M1 interfaces are supplied to M2 association, M1 and M2 snapshots are supplied to M3 association, the M3 snapshot is supplied to M6 planning, and the single M6 inventory is supplied to M7. Nearby Wi-Fi, device discovery, and enrichment therefore each run once. The standalone commands retain their original collection defaults.
+
+`FullNetworkSnapshot` preserves the existing domain snapshots, timezone-aware UTC start and completion times, ordered section results, section-scoped issues, and a derived global status. Independent operational failures do not abort later independent stages. A device stage is skipped when current network context or a usable authorized subnet is unavailable. Unknown PTR and vendor outcomes remain normal and do not degrade status.
 
 PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
 

@@ -24,6 +24,8 @@ The following limitations define the planned v1 scope:
 - Interface state is observed at collection time and can change immediately afterward.
 - Physical and virtual classification uses structured Windows fields. M1 does not infer VPN status from adapter names.
 - A full scan will combine observations made at different times and will not represent an atomic network snapshot.
+- The M8 full scan is sequential. Interfaces, Wi-Fi state, routes, nearby radio observations, and local devices can change between section start and completion.
+- A privacy-limited Wi-Fi section, firewall-limited device section, or unavailable enrichment source can make a full scan partial while preserving independent results.
 - Current network data is assembled from sequential API calls and is not an atomic snapshot.
 - Missing responses will not prove that a device is offline.
 - Endpoint firewalls and ICMP policy can suppress Echo responses without making a host absent or unreachable by other protocols.

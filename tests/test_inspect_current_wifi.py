@@ -54,6 +54,19 @@ def test_use_case_associates_m1_interface_by_guid() -> None:
     assert result.interfaces[0].network_interface == network_interface
 
 
+def test_supplied_m1_interfaces_avoid_duplicate_collection() -> None:
+    wifi_interface = _wifi_interface("aaaaaaaa-0000-0000-0000-000000000001", 4)
+    network_interface = _network_interface(wifi_interface.interface_id)
+
+    result = InspectCurrentWifi(
+        StaticWifiCollector(CurrentWifiSnapshot((wifi_interface,))),
+        FailingInterfaceCollector(),
+    ).execute((network_interface,))
+
+    assert result.interfaces[0].network_interface is network_interface
+    assert not result.is_partial
+
+
 def test_use_case_does_not_associate_by_description() -> None:
     wifi_interface = _wifi_interface("aaaaaaaa-0000-0000-0000-000000000001", 4, "Same")
     network_interface = _network_interface("bbbbbbbb-0000-0000-0000-000000000002", "Same")

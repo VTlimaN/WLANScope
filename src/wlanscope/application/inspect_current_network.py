@@ -56,23 +56,69 @@ class InspectCurrentNetwork:
         self._wifi_collector = wifi_collector
 
     def execute(self) -> CurrentNetworkSnapshot:
+        native, enrichments, dhcp_enrichments, routes, collection_issues = (
+            self._collect_network_data()
+        )
+        interfaces, interface_issues = self._collect_interfaces()
+        wifi, wifi_issues = self._collect_wifi()
+        return self._create_snapshot(
+            native,
+            enrichments,
+            dhcp_enrichments,
+            routes,
+            interfaces,
+            wifi,
+            (*collection_issues, *interface_issues, *wifi_issues),
+        )
+
+    def execute_with_associations(
+        self,
+        interfaces: Sequence[NetworkInterface],
+        wifi: CurrentWifiSnapshot | None,
+    ) -> CurrentNetworkSnapshot:
+        native, enrichments, dhcp_enrichments, routes, collection_issues = (
+            self._collect_network_data()
+        )
+        return self._create_snapshot(
+            native,
+            enrichments,
+            dhcp_enrichments,
+            routes,
+            tuple(interfaces),
+            wifi,
+            collection_issues,
+        )
+
+    def _collect_network_data(
+        self,
+    ) -> tuple[
+        NativeNetworkData,
+        tuple[InterfaceNetworkEnrichment, ...],
+        tuple[DhcpEnrichment, ...],
+        tuple[Route, ...],
+        tuple[NetworkIssue, ...],
+    ]:
         native = self._primary_collector.collect()
         fallback_enrichments, enrichment_issues = self._collect_enrichments(native)
         fallback_dhcp, dhcp_issues = self._collect_dhcp(native)
         enrichments = _prefer_primary_enrichments(native.enrichments, fallback_enrichments)
         dhcp_enrichments = _prefer_primary_dhcp(native.dhcp_enrichments, fallback_dhcp)
-        interfaces, interface_issues = self._collect_interfaces()
-        wifi, wifi_issues = self._collect_wifi()
         routes = _enrich_routes(native.routes, enrichments)
+        issues = (*native.issues, *enrichment_issues, *dhcp_issues)
+        return native, enrichments, dhcp_enrichments, routes, issues
+
+    def _create_snapshot(
+        self,
+        native: NativeNetworkData,
+        enrichments: Sequence[InterfaceNetworkEnrichment],
+        dhcp_enrichments: Sequence[DhcpEnrichment],
+        routes: Sequence[Route],
+        interfaces: Sequence[NetworkInterface],
+        wifi: CurrentWifiSnapshot | None,
+        issues: tuple[NetworkIssue, ...],
+    ) -> CurrentNetworkSnapshot:
         contexts = _create_contexts(native, routes, enrichments, dhcp_enrichments, interfaces, wifi)
-        issues = (
-            *native.issues,
-            *enrichment_issues,
-            *dhcp_issues,
-            *interface_issues,
-            *wifi_issues,
-        )
-        return CurrentNetworkSnapshot(contexts, routes, issues)
+        return CurrentNetworkSnapshot(contexts, tuple(routes), issues)
 
     def _collect_enrichments(
         self,

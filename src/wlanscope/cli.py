@@ -18,6 +18,7 @@ from wlanscope.application.inspect_nearby_wifi import (
     WifiSelectionError,
 )
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
+from wlanscope.application.run_full_network_scan import RunFullNetworkScan
 from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
 from wlanscope.domain.discovery import (
     DiscoveryError,
@@ -30,7 +31,12 @@ from wlanscope.domain.enrichment import (
     HostnameResolutionState,
     VendorResolutionState,
 )
-from wlanscope.domain.interfaces import InterfaceCollectionError, NetworkInterface
+from wlanscope.domain.full_scan import FullNetworkSnapshot, FullScanStatus
+from wlanscope.domain.interfaces import (
+    InterfaceCollectionError,
+    NetworkInterface,
+    OperationalState,
+)
 from wlanscope.domain.nearby_wifi import WifiAccessPoint, WifiNetwork
 from wlanscope.domain.network import (
     UNUSED_ROUTE_METRIC,
@@ -106,6 +112,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Explicitly authorize discovery of a local range containing 257 to 4096 hosts",
     )
+    scan_parser = subcommands.add_parser(
+        "scan",
+        help="Run a complete network and Wi-Fi snapshot",
+        description="Run a summarized full network and Wi-Fi scan using existing collectors.",
+    )
+    scan_parser.add_argument(
+        "--allow-large-range",
+        action="store_true",
+        help="Explicitly authorize local discovery of a range containing 257 to 4096 hosts",
+    )
     return parser
 
 
@@ -118,6 +134,7 @@ def main(
     current_use_case: InspectCurrentNetwork | None = None,
     devices_use_case: DiscoverLocalDevices | None = None,
     device_enrichment_use_case: EnrichDeviceInventory | None = None,
+    full_scan_use_case: RunFullNetworkScan | None = None,
     console: Console | None = None,
 ) -> int:
     parser = build_parser()
@@ -159,6 +176,12 @@ def main(
             parsed_arguments.allow_large_range,
             console or Console(),
         )
+    if parsed_arguments.command == "scan":
+        return _run_full_scan(
+            full_scan_use_case or _create_full_scan_use_case(),
+            parsed_arguments.allow_large_range,
+            console or Console(),
+        )
     return 0
 
 
@@ -196,6 +219,118 @@ def _create_device_enrichment_use_case() -> EnrichDeviceInventory:
     from wlanscope.composition import create_enrich_device_inventory
 
     return create_enrich_device_inventory()
+
+
+def _create_full_scan_use_case() -> RunFullNetworkScan:
+    from wlanscope.composition import create_run_full_network_scan
+
+    return create_run_full_network_scan()
+
+
+def _run_full_scan(
+    use_case: RunFullNetworkScan,
+    allow_large_range: bool,
+    console: Console,
+) -> int:
+    cancellation = Event()
+    try:
+        snapshot = use_case.execute(allow_large_range, cancellation)
+    except KeyboardInterrupt:
+        cancellation.set()
+        console.print("[yellow]Full network scan canceled.[/yellow]")
+        return 130
+
+    console.print(f"[bold]{PROJECT_NAME}[/bold]")
+    console.print("Full Network Scan", style="dim")
+    console.print(_create_full_scan_overview(snapshot))
+    console.print("Section Status", style="bold")
+    console.print(_create_full_scan_section_table(snapshot))
+    console.print("Network Summary", style="bold")
+    console.print(_create_full_scan_summary(snapshot))
+    if snapshot.issues:
+        console.print("Issues", style="bold")
+        for issue in snapshot.issues:
+            console.print(
+                Text.assemble(
+                    ("[", "yellow"),
+                    Text(issue.section.value, style="yellow"),
+                    ("] ", "yellow"),
+                    Text(issue.message),
+                )
+            )
+    return {
+        FullScanStatus.SUCCESS: 0,
+        FullScanStatus.PARTIAL: 3,
+        FullScanStatus.FAILED: 1,
+    }[snapshot.status]
+
+
+def _create_full_scan_overview(snapshot: FullNetworkSnapshot) -> Table:
+    table = _create_detail_table()
+    table.add_row("Status", snapshot.status.value)
+    table.add_row("Duration", f"{snapshot.duration_seconds:.1f} seconds")
+    table.add_row("Warnings", str(len(snapshot.issues)))
+    return table
+
+
+def _create_full_scan_section_table(snapshot: FullNetworkSnapshot) -> Table:
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("Section", overflow="fold")
+    table.add_column("Status", no_wrap=True)
+    for result in snapshot.sections:
+        table.add_row(result.section.value, result.status.value)
+    return table
+
+
+def _create_full_scan_summary(snapshot: FullNetworkSnapshot) -> Table:
+    table = _create_detail_table()
+    interfaces = snapshot.interfaces.interfaces if snapshot.interfaces is not None else ()
+    connected_wifi = (
+        any(interface.state.is_connected for interface in snapshot.current_wifi.interfaces)
+        if snapshot.current_wifi is not None
+        else False
+    )
+    contexts = snapshot.current_network.interfaces if snapshot.current_network is not None else ()
+    addresses = tuple(address for context in contexts for address in context.addresses)
+    routes = snapshot.current_network.default_routes if snapshot.current_network is not None else ()
+    nearby_networks = snapshot.nearby_wifi.networks if snapshot.nearby_wifi is not None else ()
+    bss_count = sum(len(network.access_points) for network in nearby_networks)
+    devices = snapshot.devices
+    table.add_row("Interfaces", str(len(interfaces)))
+    table.add_row(
+        "Interfaces up",
+        str(sum(interface.operational_state is OperationalState.UP for interface in interfaces)),
+    )
+    table.add_row("Current Wi-Fi connected", _yes_no(connected_wifi))
+    table.add_row("IPv4 present", _yes_no(any(item.address.version == 4 for item in addresses)))
+    table.add_row("IPv6 present", _yes_no(any(item.address.version == 6 for item in addresses)))
+    table.add_row(
+        "IPv4 default route",
+        _yes_no(any(route.destination.version == 4 for route in routes)),
+    )
+    table.add_row(
+        "IPv6 default route",
+        _yes_no(any(route.destination.version == 6 for route in routes)),
+    )
+    table.add_row("Nearby Wi-Fi networks", str(len(nearby_networks)))
+    table.add_row("Nearby BSS observations", str(bss_count))
+    table.add_row(
+        "Observed hosts",
+        str(len(devices.hosts)) if devices is not None else "Unavailable",
+    )
+    table.add_row(
+        "PTR resolved",
+        str(devices.ptr_resolved_count) if devices is not None else "Unavailable",
+    )
+    table.add_row(
+        "Vendors resolved",
+        str(devices.vendor_resolved_count) if devices is not None else "Unavailable",
+    )
+    return table
+
+
+def _yes_no(value: bool) -> str:
+    return "Yes" if value else "No"
 
 
 def _discover_devices(

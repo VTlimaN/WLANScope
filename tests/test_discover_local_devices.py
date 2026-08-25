@@ -210,6 +210,16 @@ def test_discovery_merges_self_gateway_neighbor_and_icmp_sources() -> None:
     assert found.reachability is ReachabilityState.RESPONDED
 
 
+def test_supplied_m3_snapshot_avoids_duplicate_network_collection() -> None:
+    snapshot = make_snapshot()
+    provider = FakeCurrentNetwork(snapshot)
+    use_case = DiscoverLocalDevices(provider, FakeNeighbors([(), ()]), FakeProbes())
+
+    use_case.execute(network_snapshot=snapshot)
+
+    assert provider.calls == 0
+
+
 def test_post_scan_neighbor_enriches_responding_host_with_mac() -> None:
     target = ip_address("192.0.2.20")
     post = NeighborEntry(

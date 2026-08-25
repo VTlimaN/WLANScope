@@ -22,6 +22,8 @@ Local device discovery is confined to the IPv4 subnet selected from the host's d
 
 Device enrichment sends PTR queries only for hosts already observed by local discovery. It does not brute-force DNS names, enumerate zones, use NetBIOS, LLMNR, or mDNS, or initiate service discovery. Vendor lookup reads an optional local registry once per execution and never calls an external MAC service for each host.
 
+The full scan composes only the capabilities already described above. It introduces no new collector or active technique. ICMP remains confined to the routed local subnet and retains the same range authorization policy. Full scan accepts no arbitrary target, performs no port or service scan, collects no secrets, and does not mutate network state.
+
 ## Prohibited capabilities
 
 WLANScope will not implement:

@@ -6,7 +6,7 @@ WLANScope is a Windows-focused cybersecurity and network visibility project crea
 
 ## Project status
 
-WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, discovers and details nearby Wi-Fi networks, and performs bounded discovery and enrichment of hosts observable on the routed local subnet. Full scan orchestration and reporting remain planned work and are not implemented yet.
+WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, discovers and details nearby Wi-Fi networks, performs bounded discovery and enrichment of hosts observable on the routed local subnet, and composes those results into a full network scan. Persistent reporting remains planned work and is not implemented yet.
 
 ## Requirements
 
@@ -36,6 +36,8 @@ python -m venv .venv
 .\.venv\Scripts\wlanscope.exe current
 .\.venv\Scripts\wlanscope.exe devices
 .\.venv\Scripts\wlanscope.exe devices --allow-large-range
+.\.venv\Scripts\wlanscope.exe scan
+.\.venv\Scripts\wlanscope.exe scan --allow-large-range
 .\.venv\Scripts\python.exe -m wlanscope --help
 .\.venv\Scripts\python.exe -m wlanscope --version
 ```
@@ -52,6 +54,10 @@ Available behavior:
 - `current` presents the current IP assignments, default routes, metrics, DNS, and DHCP context.
 - `devices` observes the local IPv4 subnet selected from routing context by combining the host, gateway, Windows neighbor cache, and bounded native ICMP Echo probes. It then attempts PTR resolution for observed hosts and local OUI lookup for usable MAC addresses.
 - `devices --allow-large-range` explicitly authorizes local discovery for ranges containing 257 through 4,096 usable addresses. Larger ranges are refused.
+- `scan` runs one summarized, sequential snapshot across adapters, current Wi-Fi, current network, nearby Wi-Fi, local devices, and device enrichment.
+- `scan --allow-large-range` forwards the same explicit local-range authorization used by `devices`.
+
+Full scan status is `SUCCESS` when every section completes normally, `PARTIAL` when useful results coexist with a limited, failed, or skipped section, and `FAILED` when no principal section produces useful information. Individual commands remain available for detailed inspection; `scan` deliberately presents a compact operational overview and does not write a report.
 
 The Wi-Fi commands do not retrieve profile XML, collect credentials, connect to networks, or modify wireless state.
 
@@ -89,7 +95,7 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M5: nearby Wi-Fi details, implemented
 - M6: bounded local subnet discovery, implemented
 - M7: device inventory enrichment, implemented
-- M8: full scan orchestration
+- M8: full scan orchestration, implemented
 - M9: TXT, JSON, and CSV reporting
 - M10: CLI polish and reliability
 - M11: documentation and portfolio preparation

@@ -25,8 +25,14 @@ class InspectCurrentWifi:
         self._wifi_collector = wifi_collector
         self._interface_collector = interface_collector
 
-    def execute(self) -> CurrentWifiSnapshot:
+    def execute(
+        self,
+        network_interfaces: Sequence[NetworkInterface] | None = None,
+    ) -> CurrentWifiSnapshot:
         snapshot = self._wifi_collector.collect()
+        if network_interfaces is not None:
+            associated = _associate_interfaces(snapshot.interfaces, network_interfaces)
+            return _sorted_snapshot(replace(snapshot, interfaces=associated))
         if self._interface_collector is None:
             return _sorted_snapshot(snapshot)
 
