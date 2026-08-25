@@ -1,5 +1,6 @@
 from wlanscope.application.discover_local_devices import DiscoverLocalDevices
 from wlanscope.application.enrich_device_inventory import EnrichDeviceInventory
+from wlanscope.application.export_full_network_report import ExportFullNetworkReport
 from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
@@ -63,6 +64,10 @@ def create_enrich_device_inventory() -> EnrichDeviceInventory:
         hostname_resolver=DnsPtrResolver(),
         vendor_resolver=LocalOuiVendorResolver(),
     )
+
+
+def create_export_full_network_report() -> ExportFullNetworkReport:
+    return ExportFullNetworkReport()
 
 
 def create_run_full_network_scan() -> RunFullNetworkScan:

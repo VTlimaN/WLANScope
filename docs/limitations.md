@@ -26,6 +26,9 @@ The following limitations define the planned v1 scope:
 - A full scan will combine observations made at different times and will not represent an atomic network snapshot.
 - The M8 full scan is sequential. Interfaces, Wi-Fi state, routes, nearby radio observations, and local devices can change between section start and completion.
 - A privacy-limited Wi-Fi section, firewall-limited device section, or unavailable enrichment source can make a full scan partial while preserving independent results.
+- JSON and Markdown reports preserve the point-in-time full snapshot, including partial or failed section states; they do not make sequential collection atomic.
+- Report schema `1.0` is stable for M9 but may evolve only through an explicit schema-version change.
+- Exported PTR and OUI data retains the availability, freshness, and attribution limitations of its original enrichment sources.
 - Current network data is assembled from sequential API calls and is not an atomic snapshot.
 - Missing responses will not prove that a device is offline.
 - Endpoint firewalls and ICMP policy can suppress Echo responses without making a host absent or unreachable by other protocols.

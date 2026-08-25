@@ -6,7 +6,7 @@ WLANScope is a Windows-focused cybersecurity and network visibility project crea
 
 ## Project status
 
-WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, discovers and details nearby Wi-Fi networks, performs bounded discovery and enrichment of hosts observable on the routed local subnet, and composes those results into a full network scan. Persistent reporting remains planned work and is not implemented yet.
+WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, discovers and details nearby Wi-Fi networks, performs bounded discovery and enrichment of hosts observable on the routed local subnet, composes those results into a full network scan, and exports explicit local JSON and Markdown reports.
 
 ## Requirements
 
@@ -38,6 +38,10 @@ python -m venv .venv
 .\.venv\Scripts\wlanscope.exe devices --allow-large-range
 .\.venv\Scripts\wlanscope.exe scan
 .\.venv\Scripts\wlanscope.exe scan --allow-large-range
+.\.venv\Scripts\wlanscope.exe scan --json C:\Reports\scan.json
+.\.venv\Scripts\wlanscope.exe scan --markdown C:\Reports\scan.md
+.\.venv\Scripts\wlanscope.exe scan --json C:\Reports\scan.json --markdown C:\Reports\scan.md
+.\.venv\Scripts\wlanscope.exe scan --json C:\Reports\scan.json --force
 .\.venv\Scripts\python.exe -m wlanscope --help
 .\.venv\Scripts\python.exe -m wlanscope --version
 ```
@@ -56,8 +60,13 @@ Available behavior:
 - `devices --allow-large-range` explicitly authorizes local discovery for ranges containing 257 through 4,096 usable addresses. Larger ranges are refused.
 - `scan` runs one summarized, sequential snapshot across adapters, current Wi-Fi, current network, nearby Wi-Fi, local devices, and device enrichment.
 - `scan --allow-large-range` forwards the same explicit local-range authorization used by `devices`.
+- `scan --json PATH` writes a versioned, machine-readable JSON report from the collected snapshot.
+- `scan --markdown PATH` writes a human-readable technical Markdown report from the same snapshot.
+- JSON and Markdown may be requested together without running a second scan. Existing files are refused unless `--force` is supplied, and the parent directory must already exist.
 
-Full scan status is `SUCCESS` when every section completes normally, `PARTIAL` when useful results coexist with a limited, failed, or skipped section, and `FAILED` when no principal section produces useful information. Individual commands remain available for detailed inspection; `scan` deliberately presents a compact operational overview and does not write a report.
+Full scan status is `SUCCESS` when every section completes normally, `PARTIAL` when useful results coexist with a limited, failed, or skipped section, and `FAILED` when no principal section produces useful information. Individual commands remain available for detailed inspection; without explicit export flags, `scan` presents only a compact operational overview and creates no files.
+
+Reports can contain IP and MAC addresses, SSIDs, BSSIDs, gateways, DNS topology, hostnames, vendor names, and wireless security metadata. They contain no Wi-Fi passwords, PSKs, credentials, profile XML, or other secrets. Reports are written only to paths explicitly supplied by the user and are never uploaded automatically. Protect exported files according to the sensitivity of the observed environment.
 
 The Wi-Fi commands do not retrieve profile XML, collect credentials, connect to networks, or modify wireless state.
 
@@ -96,7 +105,7 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M6: bounded local subnet discovery, implemented
 - M7: device inventory enrichment, implemented
 - M8: full scan orchestration, implemented
-- M9: TXT, JSON, and CSV reporting
+- M9: JSON and Markdown reporting, implemented
 - M10: CLI polish and reliability
 - M11: documentation and portfolio preparation
 - M12: v1.0.0 release

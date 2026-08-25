@@ -24,6 +24,10 @@ Device enrichment sends PTR queries only for hosts already observed by local dis
 
 The full scan composes only the capabilities already described above. It introduces no new collector or active technique. ICMP remains confined to the routed local subnet and retains the same range authorization policy. Full scan accepts no arbitrary target, performs no port or service scan, collects no secrets, and does not mutate network state.
 
+JSON and Markdown reports are created only when the user supplies an output path. They can persist network topology and identifiers including IP addresses, MAC addresses, SSIDs, BSSIDs, gateways, DNS servers, hostnames, vendor names, and security metadata. They never include passwords, PSKs, credentials, profile XML, or key material. WLANScope does not upload, transmit, synchronize, or attach reports automatically.
+
+Existing files are protected from silent overwrite unless `--force` is explicit. Destination parent directories must already exist, and atomic replacement avoids partially written final files. WLANScope does not manage Windows ACLs; protecting, retaining, and sharing the resulting local files remains the user's responsibility.
+
 ## Prohibited capabilities
 
 WLANScope will not implement:

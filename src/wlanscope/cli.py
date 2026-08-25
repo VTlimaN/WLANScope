@@ -1,5 +1,6 @@
 import argparse
 from collections.abc import Sequence
+from pathlib import Path
 from threading import Event
 
 from rich.console import Console
@@ -8,6 +9,11 @@ from rich.text import Text
 
 from wlanscope.application.discover_local_devices import DiscoverLocalDevices
 from wlanscope.application.enrich_device_inventory import EnrichDeviceInventory
+from wlanscope.application.export_full_network_report import (
+    ExportFullNetworkReport,
+    ReportPathError,
+    paths_conflict,
+)
 from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.inspect_nearby_wifi import (
@@ -51,6 +57,7 @@ from wlanscope.domain.wifi import (
     WifiConnection,
     WifiInterfaceSnapshot,
 )
+from wlanscope.reporting.writer import ReportWriteError
 from wlanscope.version import __version__
 
 PROJECT_NAME = "WLANScope"
@@ -122,6 +129,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Explicitly authorize local discovery of a range containing 257 to 4096 hosts",
     )
+    scan_parser.add_argument(
+        "--json",
+        type=Path,
+        metavar="PATH",
+        help="Write a versioned JSON report to PATH",
+    )
+    scan_parser.add_argument(
+        "--markdown",
+        type=Path,
+        metavar="PATH",
+        help="Write a Markdown report to PATH",
+    )
+    scan_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite explicitly requested report files if they already exist",
+    )
     return parser
 
 
@@ -135,6 +159,7 @@ def main(
     devices_use_case: DiscoverLocalDevices | None = None,
     device_enrichment_use_case: EnrichDeviceInventory | None = None,
     full_scan_use_case: RunFullNetworkScan | None = None,
+    report_export_use_case: ExportFullNetworkReport | None = None,
     console: Console | None = None,
 ) -> int:
     parser = build_parser()
@@ -146,6 +171,15 @@ def main(
         and parsed_arguments.details is None
     ):
         parser.error("--access-point requires --details")
+    if parsed_arguments.command == "scan":
+        if (
+            parsed_arguments.force
+            and parsed_arguments.json is None
+            and parsed_arguments.markdown is None
+        ):
+            parser.error("--force requires --json or --markdown")
+        if paths_conflict(parsed_arguments.json, parsed_arguments.markdown):
+            parser.error("--json and --markdown must use different paths")
     if parsed_arguments.command == "adapters":
         return _list_adapters(
             interface_use_case or _create_interface_use_case(),
@@ -179,7 +213,11 @@ def main(
     if parsed_arguments.command == "scan":
         return _run_full_scan(
             full_scan_use_case or _create_full_scan_use_case(),
+            report_export_use_case or _create_report_export_use_case(),
             parsed_arguments.allow_large_range,
+            parsed_arguments.json,
+            parsed_arguments.markdown,
+            parsed_arguments.force,
             console or Console(),
         )
     return 0
@@ -227,9 +265,19 @@ def _create_full_scan_use_case() -> RunFullNetworkScan:
     return create_run_full_network_scan()
 
 
+def _create_report_export_use_case() -> ExportFullNetworkReport:
+    from wlanscope.composition import create_export_full_network_report
+
+    return create_export_full_network_report()
+
+
 def _run_full_scan(
     use_case: RunFullNetworkScan,
+    report_exporter: ExportFullNetworkReport,
     allow_large_range: bool,
+    json_path: Path | None,
+    markdown_path: Path | None,
+    force: bool,
     console: Console,
 ) -> int:
     cancellation = Event()
@@ -256,6 +304,20 @@ def _run_full_scan(
                     Text(issue.section.value, style="yellow"),
                     ("] ", "yellow"),
                     Text(issue.message),
+                )
+            )
+    try:
+        exports = report_exporter.execute(snapshot, json_path, markdown_path, force)
+    except (ReportPathError, ReportWriteError) as error:
+        console.print("[bold red]Report error:[/bold red]", Text(f" {error}"))
+        return 1
+    if exports:
+        console.print("Reports written", style="bold")
+        for exported in exports:
+            console.print(
+                Text.assemble(
+                    (f"  {exported.format.value:<8} ", "green"),
+                    Text(str(exported.path)),
                 )
             )
     return {

@@ -9,7 +9,7 @@ The project foundation provides packaging, metadata, CLI entry points, tests, bu
 - Windows platform adapters isolate IP Helper, Native WLAN API, PowerShell JSON, and optional CIM boundaries;
 - the CLI renders normalized interface, current Wi-Fi, nearby Wi-Fi, current network, and observed-host views without accessing native sources directly.
 
-Persistent reporting components do not exist yet.
+M9 provides persistent JSON and Markdown reporting without adding collection behavior.
 
 ## Target boundaries
 
@@ -61,6 +61,12 @@ M8 adds `RunFullNetworkScan`, a sequential application orchestrator over the exi
 Results flow forward within one execution. M1 interfaces are supplied to M2 association, M1 and M2 snapshots are supplied to M3 association, the M3 snapshot is supplied to M6 planning, and the single M6 inventory is supplied to M7. Nearby Wi-Fi, device discovery, and enrichment therefore each run once. The standalone commands retain their original collection defaults.
 
 `FullNetworkSnapshot` preserves the existing domain snapshots, timezone-aware UTC start and completion times, ordered section results, section-scoped issues, and a derived global status. Independent operational failures do not abort later independent stages. A device stage is skipped when current network context or a usable authorized subnet is unavailable. Unknown PTR and vendor outcomes remain normal and do not degrade status.
+
+M9 introduces a one-way reporting boundary from `FullNetworkSnapshot` to explicit schema mapping or Markdown rendering and then to local file writing. Reporting modules depend only on domain models and package metadata; they do not import collectors, Windows platform modules, or `RunFullNetworkScan`. The CLI runs one full scan and passes the same immutable snapshot to every requested serializer.
+
+JSON schema version `1.0` is independent of the package version. Mapping is deliberate rather than reflective, timestamps are normalized to UTC, and SSIDs preserve both safe display text and raw hexadecimal bytes. Markdown uses fixed sections and escapes external values before table or inline rendering. Both serializers are deterministic for the same snapshot.
+
+Report writing uses UTF-8 temporary files in the destination directory, flushes and synchronizes content, and atomically renames or replaces the destination. Existing files are refused by default, `--force` enables replacement, missing parent directories are not created, and temporary files are removed after failures.
 
 PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
 
