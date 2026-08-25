@@ -18,6 +18,8 @@ Nearby Wi-Fi discovery is passive, read-only observation after a Windows-managed
 
 Current network analysis is read-only. WLANScope does not create or remove addresses or routes, change metrics or DNS servers, renew DHCP leases, or modify adapter configuration.
 
+Local device discovery is confined to the IPv4 subnet selected from the host's default routing context. It reads the Windows neighbor cache and sends only bounded ICMP Echo requests. It does not accept arbitrary target CIDRs. Ranges above 256 usable addresses require an explicit command-line authorization, and ranges above 4,096 are refused. IPv6 is not swept.
+
 ## Prohibited capabilities
 
 WLANScope will not implement:
@@ -29,6 +31,7 @@ WLANScope will not implement:
 - evil twin automation;
 - ARP poisoning or man-in-the-middle behavior;
 - packet injection;
+- port or service scanning;
 - exploit automation;
 - persistence or malware behavior;
 - authentication or access-control bypass.

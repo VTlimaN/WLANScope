@@ -6,7 +6,7 @@ WLANScope is a Windows-focused cybersecurity and network visibility project crea
 
 ## Project status
 
-WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, and discovers and details nearby Wi-Fi networks through structured Windows sources. Device discovery and reporting remain planned work and are not implemented yet.
+WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, discovers and details nearby Wi-Fi networks, and performs bounded discovery of hosts observable on the routed local subnet. Device enrichment and reporting remain planned work and are not implemented yet.
 
 ## Requirements
 
@@ -34,6 +34,8 @@ python -m venv .venv
 .\.venv\Scripts\wlanscope.exe wifi scan --details 1
 .\.venv\Scripts\wlanscope.exe wifi scan --details 1 --access-point 1
 .\.venv\Scripts\wlanscope.exe current
+.\.venv\Scripts\wlanscope.exe devices
+.\.venv\Scripts\wlanscope.exe devices --allow-large-range
 .\.venv\Scripts\python.exe -m wlanscope --help
 .\.venv\Scripts\python.exe -m wlanscope --version
 ```
@@ -48,8 +50,12 @@ Available behavior:
 - `wifi scan --details NETWORK` selects a one-based network index from that scan and shows aggregate and BSS details.
 - `wifi scan --details NETWORK --access-point AP` shows the selected access point from the same snapshot without rescanning.
 - `current` presents the current IP assignments, default routes, metrics, DNS, and DHCP context.
+- `devices` observes the local IPv4 subnet selected from routing context by combining the host, gateway, Windows neighbor cache, and bounded native ICMP Echo probes.
+- `devices --allow-large-range` explicitly authorizes local discovery for ranges containing 257 through 4,096 usable addresses. Larger ranges are refused.
 
 The Wi-Fi commands do not retrieve profile XML, collect credentials, connect to networks, or modify wireless state.
+
+Device discovery reports observed hosts, not an authoritative list of clients connected to a router. Firewalls, client isolation, sleeping devices, and stale or incomplete neighbor state can limit visibility. IPv6 neighbor entries can be observed, but WLANScope does not sweep IPv6 address space.
 
 ## Architecture direction
 
@@ -79,7 +85,8 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M3: IP, DNS, DHCP, and routing context, implemented
 - M4: nearby Wi-Fi discovery, implemented
 - M5: nearby Wi-Fi details, implemented
-- M6-M7: bounded local device discovery and enrichment
+- M6: bounded local subnet discovery, implemented
+- M7: device inventory enrichment
 - M8: full scan orchestration
 - M9: TXT, JSON, and CSV reporting
 - M10: CLI polish and reliability

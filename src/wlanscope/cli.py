@@ -1,10 +1,12 @@
 import argparse
 from collections.abc import Sequence
+from threading import Event
 
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from wlanscope.application.discover_local_devices import DiscoverLocalDevices
 from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
 from wlanscope.application.inspect_nearby_wifi import (
@@ -16,6 +18,13 @@ from wlanscope.application.inspect_nearby_wifi import (
 )
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
 from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
+from wlanscope.domain.discovery import (
+    DeviceInventory,
+    DiscoveryError,
+    DiscoverySource,
+    RangeAuthorizationRequiredError,
+    ReachabilityState,
+)
 from wlanscope.domain.interfaces import InterfaceCollectionError, NetworkInterface
 from wlanscope.domain.nearby_wifi import WifiAccessPoint, WifiNetwork
 from wlanscope.domain.network import (
@@ -82,6 +91,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inspect the current IP and routing context",
         description="Inspect current IP, routing, DNS, and DHCP context reported by Windows.",
     )
+    devices_parser = subcommands.add_parser(
+        "devices",
+        help="Discover hosts observable on the local subnet",
+        description="Discover hosts observable on the routed local IPv4 subnet.",
+    )
+    devices_parser.add_argument(
+        "--allow-large-range",
+        action="store_true",
+        help="Explicitly authorize discovery of a local range containing 257 to 4096 hosts",
+    )
     return parser
 
 
@@ -92,6 +111,7 @@ def main(
     nearby_wifi_use_case: ScanNearbyWifi | None = None,
     nearby_wifi_detail_use_case: InspectNearbyWifiNetwork | None = None,
     current_use_case: InspectCurrentNetwork | None = None,
+    devices_use_case: DiscoverLocalDevices | None = None,
     console: Console | None = None,
 ) -> int:
     parser = build_parser()
@@ -126,6 +146,12 @@ def main(
             current_use_case or _create_current_use_case(),
             console or Console(),
         )
+    if parsed_arguments.command == "devices":
+        return _discover_devices(
+            devices_use_case or _create_devices_use_case(),
+            parsed_arguments.allow_large_range,
+            console or Console(),
+        )
     return 0
 
 
@@ -151,6 +177,99 @@ def _create_current_use_case() -> InspectCurrentNetwork:
     from wlanscope.composition import create_inspect_current_network
 
     return create_inspect_current_network()
+
+
+def _create_devices_use_case() -> DiscoverLocalDevices:
+    from wlanscope.composition import create_discover_local_devices
+
+    return create_discover_local_devices()
+
+
+def _discover_devices(
+    use_case: DiscoverLocalDevices,
+    allow_large_range: bool,
+    console: Console,
+) -> int:
+    cancellation = Event()
+    try:
+        inventory = use_case.execute(allow_large_range, cancellation)
+    except KeyboardInterrupt:
+        cancellation.set()
+        console.print("[yellow]Local subnet discovery canceled.[/yellow]")
+        return 130
+    except RangeAuthorizationRequiredError as error:
+        console.print("[bold red]Error:[/bold red]", Text(f" {error}"))
+        return 2
+    except (DiscoveryError, NetworkCollectionError) as error:
+        console.print("[bold red]Error:[/bold red]", Text(f" {error}"))
+        return 1
+
+    console.print(f"[bold]{PROJECT_NAME}[/bold]")
+    console.print("Local Network Discovery", style="dim")
+    if inventory.plan.usable_host_count > 1_024:
+        console.print(
+            "[yellow]Warning:[/yellow] Explicitly authorized discovery of a large local range."
+        )
+    console.print(_create_device_table(inventory))
+    _render_device_summary(inventory, console)
+    for issue in inventory.issues:
+        console.print(
+            Text.assemble(
+                ("Warning (", "yellow"),
+                Text(issue.stage, style="yellow"),
+                ("): ", "yellow"),
+                Text(issue.message),
+            )
+        )
+    if inventory.canceled:
+        return 130
+    return 3 if inventory.is_partial else 0
+
+
+def _create_device_table(inventory: DeviceInventory) -> Table:
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("IP", no_wrap=True)
+    table.add_column("MAC", no_wrap=True)
+    table.add_column("State", no_wrap=True)
+    table.add_column("Sources", overflow="fold")
+    for host in inventory.hosts:
+        sources = ", ".join(
+            _format_discovery_source(source)
+            for source in sorted(host.sources, key=lambda item: item.value)
+        )
+        state = host.reachability.value
+        if host.reachability is ReachabilityState.NOT_PROBED and host.neighbor_state is not None:
+            state = host.neighbor_state.display_name
+        table.add_row(
+            str(host.address),
+            str(host.mac_address) if host.mac_address is not None else "Unknown",
+            state,
+            sources,
+        )
+    return table
+
+
+def _format_discovery_source(source: DiscoverySource) -> str:
+    labels = {
+        DiscoverySource.SELF: "Self",
+        DiscoverySource.GATEWAY: "Gateway",
+        DiscoverySource.NEIGHBOR_CACHE: "Neighbor",
+        DiscoverySource.ICMP_RESPONSE: "ICMP",
+    }
+    return labels[source]
+
+
+def _render_device_summary(inventory: DeviceInventory, console: Console) -> None:
+    responded = sum(host.reachability is ReachabilityState.RESPONDED for host in inventory.hosts)
+    neighbor_only = sum(
+        host.sources == frozenset({DiscoverySource.NEIGHBOR_CACHE}) for host in inventory.hosts
+    )
+    console.print(f"Subnet: {inventory.plan.subnet}")
+    console.print(f"Targets considered: {len(inventory.plan.targets)}")
+    console.print(f"Probes executed: {inventory.probes_executed}")
+    console.print(f"Observed hosts: {len(inventory.hosts)}")
+    console.print(f"ICMP responses: {responded}")
+    console.print(f"Neighbor-only observations: {neighbor_only}")
 
 
 def _list_adapters(use_case: ListNetworkInterfaces, console: Console) -> int:

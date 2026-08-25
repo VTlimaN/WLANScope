@@ -2,14 +2,14 @@
 
 ## Implemented architecture
 
-The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 through 4 provide vertical features through four concrete layers:
+The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 through 6 provide vertical features through four concrete layers:
 
-- domain models normalize network-interface, byte-safe current and nearby Wi-Fi, IP assignment, DNS, DHCP, and route data;
-- application use cases coordinate interface inventory, optional enrichment, stable association, partial failures, and deterministic ordering;
+- domain models normalize network-interface, byte-safe current and nearby Wi-Fi, IP assignment, DNS, DHCP, route, neighbor, and discovered-host data;
+- application use cases coordinate interface inventory, optional enrichment, stable association, bounded local discovery, partial failures, and deterministic ordering;
 - Windows platform adapters isolate IP Helper, Native WLAN API, PowerShell JSON, and optional CIM boundaries;
-- the CLI renders normalized interface, current Wi-Fi, nearby Wi-Fi, and current network views without accessing native sources directly.
+- the CLI renders normalized interface, current Wi-Fi, nearby Wi-Fi, current network, and observed-host views without accessing native sources directly.
 
-Host discovery and reporting components do not exist yet.
+Device enrichment and reporting components do not exist yet.
 
 ## Target boundaries
 
@@ -45,6 +45,12 @@ Available networks and BSS observations remain separate until application orches
 M5 adds a pure application selection service over `NearbyWifiSnapshot`. One-based network and access-point indices refer only to the deterministic ordering within that snapshot, so hidden or duplicate SSIDs and observations from multiple interfaces remain unambiguous. Detail presentation receives the existing snapshot and never invokes the scanner. Opening network or BSS details therefore cannot combine observations from different scans.
 
 The CLI exposes explicit `--details` and `--access-point` selectors. It does not prompt automatically, which keeps redirected and non-TTY execution deterministic. Network summaries, BSS counts, aggregate signal, observed signal, radio metadata, and individual BSS properties remain presentation concerns rather than new collection paths.
+
+M6 consumes the preferred IPv4 routing context from M3 and chooses a subnet only when the default route, interface, preferred address, and prefix provide an unambiguous result. Range cardinality is checked before targets are materialized. Up to 256 usable addresses are allowed by default, ranges through 4,096 require `--allow-large-range`, and larger ranges are refused.
+
+`GetIpNetTable2` captures IPv4 ARP and IPv6 Neighbor Discovery state before and after active probing, with API-owned memory released through `FreeMibTable`. IPv4 Echo probes use `IcmpCreateFile`, synchronous `IcmpSendEcho2` calls with a 750 ms bound, and `IcmpCloseHandle`. A bounded `ThreadPoolExecutor` uses at most 32 workers. IPv6 is never enumerated for probing.
+
+Host identity is the interface and IP pair. Merge policy preserves self, gateway, neighbor-cache, and ICMP-response provenance independently, enriches a known host with a later MAC observation, and never treats ICMP silence as proof that a host is offline. Failures in a neighbor snapshot or ICMP boundary retain other evidence as a partial inventory.
 
 PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
 

@@ -1,11 +1,11 @@
 # Limitations
 
-WLANScope currently inventories Windows network interfaces, inspects current Wi-Fi and IP/routing context, and discovers and details nearby Wi-Fi networks. It does not yet inspect local devices or provide a full-screen interactive terminal interface.
+WLANScope currently inventories Windows network interfaces, inspects current Wi-Fi and IP/routing context, discovers and details nearby Wi-Fi networks, and observes hosts on the routed local IPv4 subnet. It does not yet enrich devices with names or vendors or provide a full-screen interactive terminal interface.
 
 The following limitations define the planned v1 scope:
 
 - Windows 10 and Windows 11 are the only target platforms.
-- Future device discovery will report devices observable from the local host, not every client connected to a router or access point.
+- Device discovery reports hosts observable from the local host, not every client connected to a router or access point.
 - Firewalls, wireless client isolation, VLAN boundaries, sleeping devices, routing policy, VPNs, and operating-system caches can reduce visibility.
 - Wi-Fi SSID and BSSID data may depend on Windows location settings, user consent, adapter state, WLAN service state, hardware, and driver support.
 - Nearby scans depend on radio and driver behavior. Windows may deny scan requests or withhold available-network and BSS data when location access is unavailable.
@@ -26,6 +26,10 @@ The following limitations define the planned v1 scope:
 - A full scan will combine observations made at different times and will not represent an atomic network snapshot.
 - Current network data is assembled from sequential API calls and is not an atomic snapshot.
 - Missing responses will not prove that a device is offline.
+- Endpoint firewalls and ICMP policy can suppress Echo responses without making a host absent or unreachable by other protocols.
+- Wireless client isolation, sleeping devices, VLAN boundaries, and stale or incomplete neighbor-cache entries can hide hosts or retain observations that are no longer current.
+- Active discovery is limited to the routed local IPv4 subnet. IPv6 address spaces are not swept; only IPv6 neighbors already exposed by Windows are included.
+- Local IPv4 ranges with more than 256 usable addresses require explicit authorization, and ranges above 4,096 are refused in v1.0.
 - WLANScope will not provide offensive wireless operations, credential access, exploitation, packet manipulation, or access-control bypass.
 
 These constraints will be presented with scan results where they materially affect interpretation.
