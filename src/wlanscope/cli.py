@@ -7,10 +7,17 @@ from rich.text import Text
 
 from wlanscope.application.inspect_current_network import InspectCurrentNetwork
 from wlanscope.application.inspect_current_wifi import InspectCurrentWifi
+from wlanscope.application.inspect_nearby_wifi import (
+    InspectNearbyWifiNetwork,
+    NearbyWifiNetworkDetails,
+    WifiAccessPointSelection,
+    WifiNetworkSelection,
+    WifiSelectionError,
+)
 from wlanscope.application.list_interfaces import ListNetworkInterfaces
 from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
 from wlanscope.domain.interfaces import InterfaceCollectionError, NetworkInterface
-from wlanscope.domain.nearby_wifi import WifiNetwork
+from wlanscope.domain.nearby_wifi import WifiAccessPoint, WifiNetwork
 from wlanscope.domain.network import (
     UNUSED_ROUTE_METRIC,
     CurrentNetworkSnapshot,
@@ -53,10 +60,22 @@ def build_parser() -> argparse.ArgumentParser:
         description="Inspect current Wi-Fi connection details reported by Windows.",
     )
     wifi_subcommands = wifi_parser.add_subparsers(dest="wifi_command")
-    wifi_subcommands.add_parser(
+    wifi_scan_parser = wifi_subcommands.add_parser(
         "scan",
         help="Discover nearby Wi-Fi networks",
         description="Discover nearby Wi-Fi networks and access points reported by Windows.",
+    )
+    wifi_scan_parser.add_argument(
+        "--details",
+        type=int,
+        metavar="NETWORK",
+        help="Show details for a one-based network index from this scan",
+    )
+    wifi_scan_parser.add_argument(
+        "--access-point",
+        type=int,
+        metavar="AP",
+        help="Show details for a one-based access point index within the selected network",
     )
     subcommands.add_parser(
         "current",
@@ -71,11 +90,19 @@ def main(
     interface_use_case: ListNetworkInterfaces | None = None,
     wifi_use_case: InspectCurrentWifi | None = None,
     nearby_wifi_use_case: ScanNearbyWifi | None = None,
+    nearby_wifi_detail_use_case: InspectNearbyWifiNetwork | None = None,
     current_use_case: InspectCurrentNetwork | None = None,
     console: Console | None = None,
 ) -> int:
     parser = build_parser()
     parsed_arguments = parser.parse_args(arguments)
+    if (
+        parsed_arguments.command == "wifi"
+        and parsed_arguments.wifi_command == "scan"
+        and parsed_arguments.access_point is not None
+        and parsed_arguments.details is None
+    ):
+        parser.error("--access-point requires --details")
     if parsed_arguments.command == "adapters":
         return _list_adapters(
             interface_use_case or _create_interface_use_case(),
@@ -85,6 +112,9 @@ def main(
         if parsed_arguments.wifi_command == "scan":
             return _scan_nearby_wifi(
                 nearby_wifi_use_case or _create_nearby_wifi_use_case(),
+                nearby_wifi_detail_use_case or InspectNearbyWifiNetwork(),
+                parsed_arguments.details,
+                parsed_arguments.access_point,
                 console or Console(),
             )
         return _inspect_wifi(
@@ -255,7 +285,13 @@ def _format_kilobits_per_second(value: int | None) -> str:
     return f"{megabits:.{precision}f} Mbps"
 
 
-def _scan_nearby_wifi(use_case: ScanNearbyWifi, console: Console) -> int:
+def _scan_nearby_wifi(
+    use_case: ScanNearbyWifi,
+    detail_use_case: InspectNearbyWifiNetwork,
+    network_index: int | None,
+    access_point_index: int | None,
+    console: Console,
+) -> int:
     try:
         snapshot = use_case.execute()
     except WifiCollectionError as error:
@@ -268,13 +304,170 @@ def _scan_nearby_wifi(use_case: ScanNearbyWifi, console: Console) -> int:
         console.print("No Wi-Fi interfaces were reported by Windows.")
     elif not snapshot.networks:
         console.print("No nearby Wi-Fi networks were reported by Windows.")
+    elif network_index is not None:
+        try:
+            details = detail_use_case.execute(snapshot, WifiNetworkSelection(network_index))
+            access_point = (
+                detail_use_case.select_access_point(
+                    details,
+                    WifiAccessPointSelection(access_point_index),
+                )
+                if access_point_index is not None
+                else None
+            )
+        except WifiSelectionError as error:
+            console.print(f"[bold red]Selection error:[/bold red] {error}")
+            return 2
+        _render_nearby_wifi_details(details, access_point, console)
     else:
         console.print(_create_nearby_wifi_table(snapshot.networks))
+    if network_index is not None and not snapshot.networks and not snapshot.failed:
+        console.print("[bold red]Selection error:[/bold red] No networks are available")
+        return 2
     for issue in snapshot.issues:
         console.print(f"[yellow]Warning:[/yellow] {issue.message}")
     if snapshot.failed:
         return 1
     return 3 if snapshot.is_partial else 0
+
+
+def _render_nearby_wifi_details(
+    details: NearbyWifiNetworkDetails,
+    selected_access_point: WifiAccessPoint | None,
+    console: Console,
+) -> None:
+    console.print("Network Details", style="bold")
+    console.print(_create_nearby_network_detail_table(details))
+    if details.network.access_points:
+        console.print("Access Points", style="bold")
+        console.print(_create_access_point_summary_table(details.network.access_points))
+    else:
+        console.print("No BSS entries were observed for this network.")
+    if selected_access_point is not None:
+        console.print("Access Point Details", style="bold")
+        console.print(_create_access_point_detail_table(selected_access_point))
+    console.print(
+        "Details use the current scan snapshot; no additional scan was performed.", style="dim"
+    )
+
+
+def _create_nearby_network_detail_table(details: NearbyWifiNetworkDetails) -> Table:
+    network = details.network
+    table = _create_detail_table()
+    table.add_row("SSID", Text(network.ssid.display_text or "<Hidden>"))
+    table.add_row("Hidden", "Yes" if network.ssid.is_empty else "No")
+    table.add_row("Interface", Text(network.interface_description))
+    table.add_row("Connectable", "Yes" if network.connectable else "No")
+    table.add_row("Profile", Text(network.profile_name or "Unavailable"))
+    table.add_row("Security enabled", _format_optional_boolean(network.security_enabled))
+    table.add_row("Authentication", network.authentication.display_name)
+    table.add_row("Cipher", network.cipher.display_name)
+    table.add_row("Aggregate signal", f"{network.signal_quality}%")
+    observed_signal = details.best_observed_signal_quality
+    table.add_row(
+        "Best observed BSS signal",
+        f"{observed_signal}%" if observed_signal is not None else "Unavailable",
+    )
+    table.add_row("Reported BSS count", str(details.reported_bss_count))
+    table.add_row("Observed BSS count", str(details.observed_bss_count))
+    table.add_row("BSS count discrepancy", "Yes" if details.has_bss_count_discrepancy else "No")
+    table.add_row("Bands", ", ".join(band.value for band in details.bands) or "Unknown")
+    table.add_row(
+        "PHY types",
+        ", ".join(phy_type.display_name for phy_type in details.phy_types) or "Unknown",
+    )
+    table.add_row(
+        "Center frequencies",
+        ", ".join(_format_center_frequency(value) for value in details.center_frequencies_khz)
+        or "Unknown",
+    )
+    table.add_row("Channels", ", ".join(map(str, details.channels)) or "Unknown")
+    return table
+
+
+def _create_access_point_summary_table(
+    access_points: tuple[WifiAccessPoint, ...],
+) -> Table:
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("#", justify="right", no_wrap=True)
+    table.add_column("BSSID", no_wrap=True)
+    table.add_column("Signal", justify="right", no_wrap=True)
+    table.add_column("RSSI", justify="right", no_wrap=True)
+    table.add_column("PHY", no_wrap=True)
+    table.add_column("Band", no_wrap=True)
+    table.add_column("Channel", justify="right", no_wrap=True)
+    for index, access_point in enumerate(access_points, start=1):
+        table.add_row(
+            str(index),
+            str(access_point.bssid),
+            f"{access_point.signal_quality}%",
+            f"{access_point.rssi_dbm} dBm",
+            access_point.phy_type.display_name,
+            access_point.band.value,
+            str(access_point.channel) if access_point.channel is not None else "Unknown",
+        )
+    return table
+
+
+def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
+    table = _create_detail_table()
+    table.add_row("BSSID", str(access_point.bssid))
+    table.add_row("SSID", Text(access_point.ssid.display_text or "<Hidden>"))
+    table.add_row("Interface identifier", Text(access_point.interface_id))
+    table.add_row("PHY", access_point.phy_type.display_name)
+    table.add_row("Signal quality", f"{access_point.signal_quality}%")
+    table.add_row("RSSI", f"{access_point.rssi_dbm} dBm")
+    table.add_row("Center frequency", _format_center_frequency(access_point.center_frequency_khz))
+    table.add_row("Band", access_point.band.value)
+    table.add_row(
+        "Channel",
+        str(access_point.channel) if access_point.channel is not None else "Unknown",
+    )
+    table.add_row(
+        "Beacon period",
+        f"{access_point.beacon_period_tu} TU"
+        if access_point.beacon_period_tu is not None
+        else "Unavailable",
+    )
+    table.add_row(
+        "Capability information",
+        f"0x{access_point.capability_information:04X}"
+        if access_point.capability_information is not None
+        else "Unavailable",
+    )
+    table.add_row(
+        "BSS timestamp",
+        f"{access_point.timestamp_us} microseconds"
+        if access_point.timestamp_us is not None
+        else "Unavailable",
+    )
+    table.add_row(
+        "Host timestamp",
+        str(access_point.host_timestamp)
+        if access_point.host_timestamp is not None
+        else "Unavailable",
+    )
+    return table
+
+
+def _create_detail_table() -> Table:
+    table = Table(show_header=False, box=None, pad_edge=False)
+    table.add_column("Field", style="bold", no_wrap=True)
+    table.add_column("Value", overflow="fold")
+    return table
+
+
+def _format_center_frequency(center_frequency_khz: int) -> str:
+    frequency_mhz = center_frequency_khz / 1_000
+    if frequency_mhz >= 1_000:
+        return f"{frequency_mhz:,.3f} MHz ({frequency_mhz / 1_000:.3f} GHz)"
+    return f"{frequency_mhz:,.3f} MHz"
+
+
+def _format_optional_boolean(value: bool | None) -> str:
+    if value is None:
+        return "Unknown"
+    return "Yes" if value else "No"
 
 
 def _create_nearby_wifi_table(networks: tuple[WifiNetwork, ...]) -> Table:

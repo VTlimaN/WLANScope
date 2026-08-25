@@ -9,7 +9,7 @@ The project foundation provides packaging, metadata, CLI entry points, tests, bu
 - Windows platform adapters isolate IP Helper, Native WLAN API, PowerShell JSON, and optional CIM boundaries;
 - the CLI renders normalized interface, current Wi-Fi, nearby Wi-Fi, and current network views without accessing native sources directly.
 
-Detailed nearby-network navigation, host discovery, and reporting components do not exist yet.
+Host discovery and reporting components do not exist yet.
 
 ## Target boundaries
 
@@ -41,6 +41,10 @@ Default gateways are derived only from `0.0.0.0/0` and `::/0` routes. Route and 
 M4 reuses the Native WLAN handle and interface enumeration boundaries, requests scans with `WlanScan`, and waits for interface-specific ACM completion or failure notifications registered through `WlanRegisterNotification`. Registration is removed on successful, failed, and timed-out paths, and every wait has a fixed upper bound. `WlanGetAvailableNetworkList` supplies aggregate network and security metadata while `WlanGetNetworkBssList` supplies distinct access-point observations. Both API-owned lists are released with `WlanFreeMemory`.
 
 Available networks and BSS observations remain separate until application orchestration groups them by byte-safe SSID and stable WLAN interface identity. Exact duplicate observations use a deterministic identity that includes interface, SSID, BSSID, and center frequency. Frequency remains stored in kHz; pure domain functions derive band and a channel only for recognized 2.4, 5, and 6 GHz frequencies.
+
+M5 adds a pure application selection service over `NearbyWifiSnapshot`. One-based network and access-point indices refer only to the deterministic ordering within that snapshot, so hidden or duplicate SSIDs and observations from multiple interfaces remain unambiguous. Detail presentation receives the existing snapshot and never invokes the scanner. Opening network or BSS details therefore cannot combine observations from different scans.
+
+The CLI exposes explicit `--details` and `--access-point` selectors. It does not prompt automatically, which keeps redirected and non-TTY execution deterministic. Network summaries, BSS counts, aggregate signal, observed signal, radio metadata, and individual BSS properties remain presentation concerns rather than new collection paths.
 
 PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
 

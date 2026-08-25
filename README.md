@@ -6,7 +6,7 @@ WLANScope is a Windows-focused cybersecurity and network visibility project crea
 
 ## Project status
 
-WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, and discovers nearby Wi-Fi networks through structured Windows sources. Detailed network navigation, device discovery, and reporting remain planned work and are not implemented yet.
+WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, and discovers and details nearby Wi-Fi networks through structured Windows sources. Device discovery and reporting remain planned work and are not implemented yet.
 
 ## Requirements
 
@@ -31,6 +31,8 @@ python -m venv .venv
 .\.venv\Scripts\wlanscope.exe adapters
 .\.venv\Scripts\wlanscope.exe wifi
 .\.venv\Scripts\wlanscope.exe wifi scan
+.\.venv\Scripts\wlanscope.exe wifi scan --details 1
+.\.venv\Scripts\wlanscope.exe wifi scan --details 1 --access-point 1
 .\.venv\Scripts\wlanscope.exe current
 .\.venv\Scripts\python.exe -m wlanscope --help
 .\.venv\Scripts\python.exe -m wlanscope --version
@@ -43,6 +45,8 @@ Available behavior:
 - `adapters` lists interfaces reported by Windows, with structured IP Helper data and optional PowerShell enrichment.
 - `wifi` inspects current wireless connections reported by the Native WLAN API.
 - `wifi scan` requests a bounded Native WLAN scan and summarizes nearby networks and observed access points.
+- `wifi scan --details NETWORK` selects a one-based network index from that scan and shows aggregate and BSS details.
+- `wifi scan --details NETWORK --access-point AP` shows the selected access point from the same snapshot without rescanning.
 - `current` presents the current IP assignments, default routes, metrics, DNS, and DHCP context.
 
 The Wi-Fi commands do not retrieve profile XML, collect credentials, connect to networks, or modify wireless state.
@@ -74,7 +78,7 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M2: current Wi-Fi analysis, implemented
 - M3: IP, DNS, DHCP, and routing context, implemented
 - M4: nearby Wi-Fi discovery, implemented
-- M5: nearby Wi-Fi details
+- M5: nearby Wi-Fi details, implemented
 - M6-M7: bounded local device discovery and enrichment
 - M8: full scan orchestration
 - M9: TXT, JSON, and CSV reporting
