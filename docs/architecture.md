@@ -68,6 +68,10 @@ JSON schema version `1.0` is independent of the package version. Mapping is deli
 
 Report writing uses UTF-8 temporary files in the destination directory, flushes and synchronizes content, and atomically renames or replaces the destination. Existing files are refused by default, `--force` enables replacement, missing parent directories are not created, and temporary files are removed after failures.
 
+M10 keeps argparse and the existing command hierarchy while making the presentation boundary explicit. Normal results render to standard output; expected operational failures, partial-result warnings, policy guidance, and cancellation notices render to standard error. An injected console remains supported for deterministic offline tests, while real non-TTY execution disables interactive behavior and does not rely on ANSI styling.
+
+Long-running device, full-scan, and nearby Wi-Fi scan flows normalize user cancellation to exit code 130 without hiding unexpected programming errors. Compact tables retain essential columns below 100 terminal columns and omit only secondary presentation fields; domain snapshots and reports remain complete and unchanged.
+
 PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
 
 Future Windows APIs and structured operating-system sources will follow the same priority. Localized textual commands remain last-resort fallbacks with dedicated parsers and sanitized fixtures.

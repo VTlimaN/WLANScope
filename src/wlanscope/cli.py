@@ -67,15 +67,21 @@ PROJECT_TAGLINE = "Windows Wireless & Network Reconnaissance"
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wlanscope",
-        description=f"{PROJECT_NAME} — {PROJECT_TAGLINE}",
-        epilog="Created by sasser",
+        description=(
+            f"{PROJECT_NAME}: {PROJECT_TAGLINE}. Read-only network observation for Windows."
+        ),
+        epilog=(
+            "Use 'wlanscope COMMAND --help' for command details. Wi-Fi scanning observes "
+            "the radio environment; device discovery sends bounded ICMP Echo probes only "
+            "within the selected local subnet."
+        ),
     )
     parser.add_argument(
         "--version",
         action="version",
         version=f"{PROJECT_NAME} {__version__}",
     )
-    subcommands = parser.add_subparsers(dest="command")
+    subcommands = parser.add_subparsers(dest="command", title="commands", metavar="COMMAND")
     subcommands.add_parser(
         "adapters",
         help="List Windows network interfaces",
@@ -84,13 +90,21 @@ def build_parser() -> argparse.ArgumentParser:
     wifi_parser = subcommands.add_parser(
         "wifi",
         help="Inspect the current Wi-Fi connection",
-        description="Inspect current Wi-Fi connection details reported by Windows.",
+        description=(
+            "Inspect current Wi-Fi connection details. Use the scan subcommand to observe "
+            "nearby Wi-Fi networks."
+        ),
     )
-    wifi_subcommands = wifi_parser.add_subparsers(dest="wifi_command")
+    wifi_subcommands = wifi_parser.add_subparsers(
+        dest="wifi_command", title="Wi-Fi commands", metavar="COMMAND"
+    )
     wifi_scan_parser = wifi_subcommands.add_parser(
         "scan",
         help="Discover nearby Wi-Fi networks",
-        description="Discover nearby Wi-Fi networks and access points reported by Windows.",
+        description=(
+            "Observe nearby Wi-Fi networks and access points reported by Windows. Windows "
+            "location access may be required."
+        ),
     )
     wifi_scan_parser.add_argument(
         "--details",
@@ -112,12 +126,18 @@ def build_parser() -> argparse.ArgumentParser:
     devices_parser = subcommands.add_parser(
         "devices",
         help="Discover hosts observable on the local subnet",
-        description="Discover hosts observable on the routed local IPv4 subnet.",
+        description=(
+            "Observe hosts on the routed local IPv4 subnet using the neighbor cache and "
+            "bounded ICMP Echo probes."
+        ),
     )
     devices_parser.add_argument(
         "--allow-large-range",
         action="store_true",
-        help="Explicitly authorize discovery of a local range containing 257 to 4096 hosts",
+        help=(
+            "Authorize the selected local subnet when it contains 257 to 4096 usable "
+            "addresses; discovery remains limited to that subnet"
+        ),
     )
     scan_parser = subcommands.add_parser(
         "scan",
@@ -127,7 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--allow-large-range",
         action="store_true",
-        help="Explicitly authorize local discovery of a range containing 257 to 4096 hosts",
+        help=(
+            "Authorize the selected local subnet when it contains 257 to 4096 usable "
+            "addresses; discovery remains limited to that subnet"
+        ),
     )
     scan_parser.add_argument(
         "--json",
@@ -144,7 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite explicitly requested report files if they already exist",
+        help="Overwrite only explicitly requested JSON or Markdown report files",
     )
     return parser
 
@@ -161,9 +184,12 @@ def main(
     full_scan_use_case: RunFullNetworkScan | None = None,
     report_export_use_case: ExportFullNetworkReport | None = None,
     console: Console | None = None,
+    error_console: Console | None = None,
 ) -> int:
     parser = build_parser()
     parsed_arguments = parser.parse_args(arguments)
+    output = console or Console()
+    diagnostics = error_console or (console if console is not None else Console(stderr=True))
     if (
         parsed_arguments.command == "wifi"
         and parsed_arguments.wifi_command == "scan"
@@ -183,7 +209,8 @@ def main(
     if parsed_arguments.command == "adapters":
         return _list_adapters(
             interface_use_case or _create_interface_use_case(),
-            console or Console(),
+            output,
+            diagnostics,
         )
     if parsed_arguments.command == "wifi":
         if parsed_arguments.wifi_command == "scan":
@@ -192,23 +219,27 @@ def main(
                 nearby_wifi_detail_use_case or InspectNearbyWifiNetwork(),
                 parsed_arguments.details,
                 parsed_arguments.access_point,
-                console or Console(),
+                output,
+                diagnostics,
             )
         return _inspect_wifi(
             wifi_use_case or _create_wifi_use_case(),
-            console or Console(),
+            output,
+            diagnostics,
         )
     if parsed_arguments.command == "current":
         return _inspect_current_network(
             current_use_case or _create_current_use_case(),
-            console or Console(),
+            output,
+            diagnostics,
         )
     if parsed_arguments.command == "devices":
         return _discover_devices(
             devices_use_case or _create_devices_use_case(),
             device_enrichment_use_case or _create_device_enrichment_use_case(),
             parsed_arguments.allow_large_range,
-            console or Console(),
+            output,
+            diagnostics,
         )
     if parsed_arguments.command == "scan":
         return _run_full_scan(
@@ -218,7 +249,8 @@ def main(
             parsed_arguments.json,
             parsed_arguments.markdown,
             parsed_arguments.force,
-            console or Console(),
+            output,
+            diagnostics,
         )
     return 0
 
@@ -279,13 +311,14 @@ def _run_full_scan(
     markdown_path: Path | None,
     force: bool,
     console: Console,
+    error_console: Console,
 ) -> int:
     cancellation = Event()
     try:
         snapshot = use_case.execute(allow_large_range, cancellation)
     except KeyboardInterrupt:
         cancellation.set()
-        console.print("[yellow]Full network scan canceled.[/yellow]")
+        error_console.print("[yellow]Full network scan canceled.[/yellow]")
         return 130
 
     console.print(f"[bold]{PROJECT_NAME}[/bold]")
@@ -296,9 +329,9 @@ def _run_full_scan(
     console.print("Network Summary", style="bold")
     console.print(_create_full_scan_summary(snapshot))
     if snapshot.issues:
-        console.print("Issues", style="bold")
+        error_console.print("Issues", style="bold")
         for issue in snapshot.issues:
-            console.print(
+            error_console.print(
                 Text.assemble(
                     ("[", "yellow"),
                     Text(issue.section.value, style="yellow"),
@@ -309,7 +342,7 @@ def _run_full_scan(
     try:
         exports = report_exporter.execute(snapshot, json_path, markdown_path, force)
     except (ReportPathError, ReportWriteError) as error:
-        console.print("[bold red]Report error:[/bold red]", Text(f" {error}"))
+        error_console.print("[bold red]Report error:[/bold red]", Text(f" {error}"))
         return 1
     if exports:
         console.print("Reports written", style="bold")
@@ -400,32 +433,37 @@ def _discover_devices(
     enrichment_use_case: EnrichDeviceInventory,
     allow_large_range: bool,
     console: Console,
+    error_console: Console,
 ) -> int:
     cancellation = Event()
     try:
         inventory = use_case.execute(allow_large_range, cancellation)
+        if inventory.canceled:
+            error_console.print("[yellow]Local subnet discovery canceled.[/yellow]")
+            return 130
         enriched = enrichment_use_case.execute(inventory, cancellation)
     except KeyboardInterrupt:
         cancellation.set()
-        console.print("[yellow]Local subnet discovery canceled.[/yellow]")
+        error_console.print("[yellow]Local subnet discovery canceled.[/yellow]")
         return 130
     except RangeAuthorizationRequiredError as error:
-        console.print("[bold red]Error:[/bold red]", Text(f" {error}"))
+        error_console.print("[bold red]Error:[/bold red]", Text(f" {error}"))
+        error_console.print("Re-run with --allow-large-range.")
         return 2
     except (DiscoveryError, NetworkCollectionError) as error:
-        console.print("[bold red]Error:[/bold red]", Text(f" {error}"))
+        error_console.print("[bold red]Discovery unavailable:[/bold red]", Text(f" {error}"))
         return 1
 
     console.print(f"[bold]{PROJECT_NAME}[/bold]")
     console.print("Local Network Discovery", style="dim")
     if inventory.plan.usable_host_count > 1_024:
-        console.print(
+        error_console.print(
             "[yellow]Warning:[/yellow] Explicitly authorized discovery of a large local range."
         )
     console.print(_create_device_table(enriched, console.width))
     _render_device_summary(enriched, console)
     for issue in inventory.issues:
-        console.print(
+        error_console.print(
             Text.assemble(
                 ("Warning (", "yellow"),
                 Text(issue.stage, style="yellow"),
@@ -434,7 +472,7 @@ def _discover_devices(
             )
         )
     for enrichment_issue in enriched.issues:
-        console.print(
+        error_console.print(
             Text.assemble(
                 ("Warning (", "yellow"),
                 Text(enrichment_issue.source, style="yellow"),
@@ -442,8 +480,6 @@ def _discover_devices(
                 Text(enrichment_issue.message),
             )
         )
-    if inventory.canceled:
-        return 130
     return 3 if enriched.is_partial else 0
 
 
@@ -524,11 +560,17 @@ def _render_device_summary(inventory: EnrichedDeviceInventory, console: Console)
     console.print(f"Locally administered MACs: {inventory.locally_administered_count}")
 
 
-def _list_adapters(use_case: ListNetworkInterfaces, console: Console) -> int:
+def _list_adapters(
+    use_case: ListNetworkInterfaces,
+    console: Console,
+    error_console: Console,
+) -> int:
     try:
         inventory = use_case.execute()
     except InterfaceCollectionError as error:
-        console.print(f"[bold red]Error:[/bold red] {error}")
+        error_console.print(
+            "[bold red]Network interfaces unavailable:[/bold red]", Text(f" {error}")
+        )
         return 1
 
     console.print(f"[bold]{PROJECT_NAME}[/bold]")
@@ -537,32 +579,40 @@ def _list_adapters(use_case: ListNetworkInterfaces, console: Console) -> int:
     if not inventory.interfaces:
         console.print("No network interfaces were returned by Windows.")
     else:
-        console.print(_create_interface_table(inventory.interfaces))
+        console.print(_create_interface_table(inventory.interfaces, console.width))
 
     for warning in inventory.warnings:
-        console.print(f"[yellow]Warning:[/yellow] {warning}")
+        error_console.print("[yellow]Warning:[/yellow]", Text(f" {warning}"))
 
     return 3 if inventory.is_partial else 0
 
 
-def _create_interface_table(interfaces: tuple[NetworkInterface, ...]) -> Table:
+def _create_interface_table(interfaces: tuple[NetworkInterface, ...], terminal_width: int) -> Table:
     table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
     table.add_column("Index", justify="right", no_wrap=True)
     table.add_column("Type", no_wrap=True)
     table.add_column("State", no_wrap=True)
     table.add_column("Name", overflow="fold")
-    table.add_column("MAC", no_wrap=True)
-    table.add_column("Link", justify="right", no_wrap=True)
+    compact = terminal_width < 100
+    if not compact:
+        table.add_column("MAC", no_wrap=True)
+        table.add_column("Link", justify="right", no_wrap=True)
 
     for interface in interfaces:
-        table.add_row(
+        row: list[str | Text] = [
             str(interface.interface_index),
             interface.kind.value,
             interface.operational_state.value,
-            interface.friendly_name,
-            str(interface.mac_address) if interface.mac_address else "Unknown",
-            _format_link_speed(interface),
-        )
+            Text(interface.friendly_name),
+        ]
+        if not compact:
+            row.extend(
+                (
+                    str(interface.mac_address) if interface.mac_address else "Unknown",
+                    _format_link_speed(interface),
+                )
+            )
+        table.add_row(*row)
     return table
 
 
@@ -590,11 +640,15 @@ def _format_bits_per_second(value: int | None) -> str:
     return f"{value} bps"
 
 
-def _inspect_wifi(use_case: InspectCurrentWifi, console: Console) -> int:
+def _inspect_wifi(
+    use_case: InspectCurrentWifi,
+    console: Console,
+    error_console: Console,
+) -> int:
     try:
         snapshot = use_case.execute()
     except WifiCollectionError as error:
-        console.print(f"[bold red]Error:[/bold red] {error}")
+        error_console.print("[bold red]Current Wi-Fi unavailable:[/bold red]", Text(f" {error}"))
         return 1
 
     console.print(f"[bold]{PROJECT_NAME}[/bold]")
@@ -605,7 +659,7 @@ def _inspect_wifi(use_case: InspectCurrentWifi, console: Console) -> int:
         _render_wifi_interfaces(snapshot, console)
 
     for issue in snapshot.issues:
-        console.print(f"[yellow]Warning:[/yellow] {issue.message}")
+        error_console.print("[yellow]Warning:[/yellow]", Text(f" {issue.message}"))
     return 3 if snapshot.is_partial else 0
 
 
@@ -662,11 +716,15 @@ def _scan_nearby_wifi(
     network_index: int | None,
     access_point_index: int | None,
     console: Console,
+    error_console: Console,
 ) -> int:
     try:
         snapshot = use_case.execute()
+    except KeyboardInterrupt:
+        error_console.print("[yellow]Nearby Wi-Fi scan canceled.[/yellow]")
+        return 130
     except WifiCollectionError as error:
-        console.print(f"[bold red]Error:[/bold red] {error}")
+        error_console.print("[bold red]Nearby Wi-Fi unavailable:[/bold red]", Text(f" {error}"))
         return 1
 
     console.print(f"[bold]{PROJECT_NAME}[/bold]")
@@ -687,16 +745,16 @@ def _scan_nearby_wifi(
                 else None
             )
         except WifiSelectionError as error:
-            console.print(f"[bold red]Selection error:[/bold red] {error}")
+            error_console.print("[bold red]Selection error:[/bold red]", Text(f" {error}"))
             return 2
         _render_nearby_wifi_details(details, access_point, console)
     else:
-        console.print(_create_nearby_wifi_table(snapshot.networks))
+        console.print(_create_nearby_wifi_table(snapshot.networks, console.width))
     if network_index is not None and not snapshot.networks and not snapshot.failed:
-        console.print("[bold red]Selection error:[/bold red] No networks are available")
+        error_console.print("[bold red]Selection error:[/bold red] No networks are available")
         return 2
     for issue in snapshot.issues:
-        console.print(f"[yellow]Warning:[/yellow] {issue.message}")
+        error_console.print("[yellow]Warning:[/yellow]", Text(f" {issue.message}"))
     if snapshot.failed:
         return 1
     return 3 if snapshot.is_partial else 0
@@ -841,14 +899,16 @@ def _format_optional_boolean(value: bool | None) -> str:
     return "Yes" if value else "No"
 
 
-def _create_nearby_wifi_table(networks: tuple[WifiNetwork, ...]) -> Table:
+def _create_nearby_wifi_table(networks: tuple[WifiNetwork, ...], terminal_width: int) -> Table:
     table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
     table.add_column("SSID", overflow="fold")
     table.add_column("BSS", justify="right", no_wrap=True)
     table.add_column("Signal", justify="right", no_wrap=True)
     table.add_column("Band", no_wrap=True)
-    table.add_column("Security", overflow="fold")
-    table.add_column("Interface", overflow="fold")
+    compact = terminal_width < 100
+    if not compact:
+        table.add_column("Security", overflow="fold")
+        table.add_column("Interface", overflow="fold")
     for network in networks:
         observed_count = len(network.access_points)
         bss_count = observed_count or network.reported_bss_count
@@ -859,22 +919,27 @@ def _create_nearby_wifi_table(networks: tuple[WifiNetwork, ...]) -> Table:
             security = f"{network.authentication.display_name} / {network.cipher.display_name}"
         else:
             security = "Open"
-        table.add_row(
+        row: list[str | Text] = [
             Text(network.ssid.display_text or "<Hidden>"),
             str(bss_count),
             f"{network.best_signal_quality}%",
             bands,
-            security,
-            Text(network.interface_description),
-        )
+        ]
+        if not compact:
+            row.extend((security, Text(network.interface_description)))
+        table.add_row(*row)
     return table
 
 
-def _inspect_current_network(use_case: InspectCurrentNetwork, console: Console) -> int:
+def _inspect_current_network(
+    use_case: InspectCurrentNetwork,
+    console: Console,
+    error_console: Console,
+) -> int:
     try:
         snapshot = use_case.execute()
     except NetworkCollectionError as error:
-        console.print(f"[bold red]Error:[/bold red] {error}")
+        error_console.print("[bold red]Current network unavailable:[/bold red]", Text(f" {error}"))
         return 1
 
     console.print(f"[bold]{PROJECT_NAME}[/bold]")
@@ -888,7 +953,12 @@ def _inspect_current_network(use_case: InspectCurrentNetwork, console: Console) 
         console.print(_create_network_context_table(context, snapshot.default_routes))
     console.print(f"Routes observed: {len(snapshot.routes)}", style="dim")
     for issue in snapshot.issues:
-        console.print(f"[yellow]Warning ({issue.source.value}):[/yellow] {issue.message}")
+        error_console.print(
+            Text.assemble(
+                (f"Warning ({issue.source.value}): ", "yellow"),
+                Text(issue.message),
+            )
+        )
     return 3 if snapshot.is_partial else 0
 
 

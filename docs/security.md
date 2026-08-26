@@ -50,9 +50,11 @@ The approved v1 scope also excludes port scanning and service exploitation.
 
 The adapters, Wi-Fi, and devices commands may display local interface names, MAC addresses, SSIDs, BSSIDs, security metadata, profile names, PTR hostnames, and vendor organizations in the terminal. They do not persist this information automatically and never request profile key material or credentials.
 
-Future reports may contain internal hostnames, IP addresses, prefixes, gateways, DNS and DHCP servers, MAC addresses, SSIDs, BSSIDs, routes, adapter details, and other infrastructure topology metadata. Users must protect, retain, and share these reports according to their organization's data-handling requirements.
+Reports may contain internal hostnames, IP addresses, prefixes, gateways, DNS and DHCP servers, MAC addresses, SSIDs, BSSIDs, routes, adapter details, and other infrastructure topology metadata. Users must protect, retain, and share these reports according to their organization's data-handling requirements.
 
 Reports will be created only when explicitly requested and will not contain credentials or Wi-Fi secrets.
+
+CLI reliability changes do not expand collection scope, bypass privacy controls, authorize arbitrary targets, or add active network techniques.
 
 ## Reporting vulnerabilities
 

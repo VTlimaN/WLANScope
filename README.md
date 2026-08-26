@@ -64,6 +64,16 @@ Available behavior:
 - `scan --markdown PATH` writes a human-readable technical Markdown report from the same snapshot.
 - JSON and Markdown may be requested together without running a second scan. Existing files are refused unless `--force` is supplied, and the parent directory must already exist.
 
+Every command provides focused help through `wlanscope COMMAND --help`; use `wlanscope wifi scan --help` for the nested Wi-Fi scan options. Normal results are written to standard output, while usage errors, operational failures, cancellation notices, and partial-result warnings use standard error. Redirected output is deterministic and does not prompt, animate progress, or require ANSI color support.
+
+CLI exit codes are consistent across commands:
+
+- `0`: success;
+- `1`: operational failure, including a requested report that could not be written;
+- `2`: invalid usage, invalid selection, or missing explicit range authorization;
+- `3`: partial result with useful data retained;
+- `130`: canceled by the user.
+
 Full scan status is `SUCCESS` when every section completes normally, `PARTIAL` when useful results coexist with a limited, failed, or skipped section, and `FAILED` when no principal section produces useful information. Individual commands remain available for detailed inspection; without explicit export flags, `scan` presents only a compact operational overview and creates no files.
 
 Reports can contain IP and MAC addresses, SSIDs, BSSIDs, gateways, DNS topology, hostnames, vendor names, and wireless security metadata. They contain no Wi-Fi passwords, PSKs, credentials, profile XML, or other secrets. Reports are written only to paths explicitly supplied by the user and are never uploaded automatically. Protect exported files according to the sensitivity of the observed environment.
@@ -106,7 +116,7 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M7: device inventory enrichment, implemented
 - M8: full scan orchestration, implemented
 - M9: JSON and Markdown reporting, implemented
-- M10: CLI polish and reliability
+- M10: CLI polish and reliability, implemented
 - M11: documentation and portfolio preparation
 - M12: v1.0.0 release
 
