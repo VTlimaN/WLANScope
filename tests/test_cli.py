@@ -100,13 +100,13 @@ def test_module_entry_point_without_arguments() -> None:
     )
 
     assert result.returncode == 0
-    assert result.stdout == ""
+    assert "usage: wlanscope" in result.stdout
     assert result.stderr == ""
 
 
 def test_cli_without_arguments_succeeds(capsys: CaptureFixture[str]) -> None:
     assert main([]) == 0
-    assert capsys.readouterr().out == ""
+    assert "usage: wlanscope" in capsys.readouterr().out
 
 
 def test_adapters_command_renders_fake_interfaces() -> None:

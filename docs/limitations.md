@@ -18,6 +18,8 @@ The following limitations define the planned v1 scope:
 - The Native WLAN API may not expose every driver-specific radio or security detail.
 - Collectors may return partial results when a source is unavailable, unsupported, denied, or malformed.
 - Redirected CLI output is non-interactive and deterministic. Partial-result warnings and operational diagnostics are written to standard error, so pipelines that require diagnostics must capture both output streams.
+- Interactive mode requires both terminal input and terminal output. The root command prints help instead of opening a menu when either stream is redirected.
+- Interactive data remains point-in-time. Returning from a detail view preserves the current snapshot, and a new collection occurs only after an explicit Refresh action.
 - Compact terminal layouts omit secondary table columns below 100 columns. Commands with detail views and persistent reports retain the complete collected data.
 - PowerShell networking cmdlets and CIM can be denied by Windows policy. IP Helper results remain available while affected DNS, metric, or DHCP enrichment is reported as partial.
 - DHCP lease timestamps are not collected because the optional CIM source is not sufficiently available to make them a dependable M3 contract.

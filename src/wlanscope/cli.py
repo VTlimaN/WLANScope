@@ -1,5 +1,6 @@
 import argparse
-from collections.abc import Sequence
+import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from threading import Event
 
@@ -185,6 +186,9 @@ def main(
     report_export_use_case: ExportFullNetworkReport | None = None,
     console: Console | None = None,
     error_console: Console | None = None,
+    input_reader: Callable[[str], str] | None = None,
+    stdin_is_tty: bool | None = None,
+    stdout_is_tty: bool | None = None,
 ) -> int:
     parser = build_parser()
     parsed_arguments = parser.parse_args(arguments)
@@ -206,6 +210,27 @@ def main(
             parser.error("--force requires --json or --markdown")
         if paths_conflict(parsed_arguments.json, parsed_arguments.markdown):
             parser.error("--json and --markdown must use different paths")
+    if parsed_arguments.command is None:
+        interactive = (stdin_is_tty if stdin_is_tty is not None else sys.stdin.isatty()) and (
+            stdout_is_tty if stdout_is_tty is not None else output.is_terminal
+        )
+        if not interactive:
+            output.print(Text(parser.format_help()), end="")
+            return 0
+        return _run_interactive(
+            interface_use_case or _create_interface_use_case(),
+            wifi_use_case or _create_wifi_use_case(),
+            current_use_case or _create_current_use_case(),
+            nearby_wifi_use_case or _create_nearby_wifi_use_case(),
+            nearby_wifi_detail_use_case or InspectNearbyWifiNetwork(),
+            devices_use_case or _create_devices_use_case(),
+            device_enrichment_use_case or _create_device_enrichment_use_case(),
+            full_scan_use_case or _create_full_scan_use_case(),
+            report_export_use_case or _create_report_export_use_case(),
+            output,
+            diagnostics,
+            input_reader or input,
+        )
     if parsed_arguments.command == "adapters":
         return _list_adapters(
             interface_use_case or _create_interface_use_case(),
@@ -253,6 +278,58 @@ def main(
             diagnostics,
         )
     return 0
+
+
+def _run_interactive(
+    interfaces: ListNetworkInterfaces,
+    current_wifi: InspectCurrentWifi,
+    current_network: InspectCurrentNetwork,
+    nearby_wifi: ScanNearbyWifi,
+    nearby_details: InspectNearbyWifiNetwork,
+    devices: DiscoverLocalDevices,
+    enrichment: EnrichDeviceInventory,
+    full_scan: RunFullNetworkScan,
+    reports: ExportFullNetworkReport,
+    console: Console,
+    error_console: Console,
+    input_reader: Callable[[str], str],
+) -> int:
+    from wlanscope.interactive import (
+        InteractiveRenderers,
+        InteractiveSession,
+        InteractiveUseCases,
+    )
+
+    return InteractiveSession(
+        InteractiveUseCases(
+            interfaces,
+            current_wifi,
+            current_network,
+            nearby_wifi,
+            nearby_details,
+            devices,
+            enrichment,
+            full_scan,
+            reports,
+        ),
+        InteractiveRenderers(
+            _create_interface_table,
+            _create_wifi_table,
+            _relevant_network_contexts,
+            _create_network_context_table,
+            _create_nearby_wifi_table,
+            _render_nearby_wifi_details,
+            _create_access_point_detail_table,
+            _create_device_table,
+            _render_device_summary,
+            _create_full_scan_overview,
+            _create_full_scan_section_table,
+            _create_full_scan_summary,
+        ),
+        console,
+        error_console,
+        input_reader,
+    ).run()
 
 
 def _create_interface_use_case() -> ListNetworkInterfaces:

@@ -26,6 +26,7 @@ python -m venv .venv
 ## Current usage
 
 ```powershell
+.\.venv\Scripts\wlanscope.exe
 .\.venv\Scripts\wlanscope.exe --help
 .\.venv\Scripts\wlanscope.exe --version
 .\.venv\Scripts\wlanscope.exe adapters
@@ -48,6 +49,7 @@ python -m venv .venv
 
 Available behavior:
 
+- `wlanscope` opens the interactive terminal experience when both input and output are attached to a terminal. The main menu provides current network, interface, nearby Wi-Fi, observed-device, full-scan, report, and About workflows.
 - `--help` displays the supported command surface;
 - `--version` displays package metadata versioning;
 - `adapters` lists interfaces reported by Windows, with structured IP Helper data and optional PowerShell enrichment.
@@ -65,6 +67,8 @@ Available behavior:
 - JSON and Markdown may be requested together without running a second scan. Existing files are refused unless `--force` is supplied, and the parent directory must already exist.
 
 Every command provides focused help through `wlanscope COMMAND --help`; use `wlanscope wifi scan --help` for the nested Wi-Fi scan options. Normal results are written to standard output, while usage errors, operational failures, cancellation notices, and partial-result warnings use standard error. Redirected output is deterministic and does not prompt, animate progress, or require ANSI color support.
+
+Interactive screens keep one snapshot while the user opens details or returns within that screen. Refresh is always explicit and performs a new collection only for the selected workflow. When stdin or stdout is redirected, the root command prints help and exits without reading input; scripts and automation should continue to use explicit subcommands.
 
 CLI exit codes are consistent across commands:
 
@@ -117,6 +121,9 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M8: full scan orchestration, implemented
 - M9: JSON and Markdown reporting, implemented
 - M10: CLI polish and reliability, implemented
+- M10.5: interactive terminal experience, implemented
+- M10.6: data completeness and deep inspection
+- M10.7: CLI visual design and final UX
 - M11: documentation and portfolio preparation
 - M12: v1.0.0 release
 

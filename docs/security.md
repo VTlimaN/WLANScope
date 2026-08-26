@@ -56,6 +56,8 @@ Reports will be created only when explicitly requested and will not contain cred
 
 CLI reliability changes do not expand collection scope, bypass privacy controls, authorize arbitrary targets, or add active network techniques.
 
+The interactive menu composes the same approved use cases and does not expand their authority. Large local ranges still require an explicit action, reports still require user-supplied paths and explicit overwrite confirmation, and navigation never enables background collection or monitoring.
+
 ## Reporting vulnerabilities
 
 Security vulnerabilities should be reported privately to the project maintainer when a private reporting channel becomes available. Public reports should not include credentials, sensitive network captures, or identifying infrastructure data.

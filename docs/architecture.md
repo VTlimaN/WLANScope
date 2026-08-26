@@ -72,6 +72,14 @@ M10 keeps argparse and the existing command hierarchy while making the presentat
 
 Long-running device, full-scan, and nearby Wi-Fi scan flows normalize user cancellation to exit code 130 without hiding unexpected programming errors. Compact tables retain essential columns below 100 terminal columns and omit only secondary presentation fields; domain snapshots and reports remain complete and unchanged.
 
+M10.5 adds an interactive presentation layer behind the root command. `InteractiveSession` receives the existing M1 through M9 use cases as an explicit immutable bundle and never imports Windows platform adapters, ctypes boundaries, collectors, or reporting serializers. The argparse subcommands retain their direct automation paths.
+
+Interactive navigation retains nearby Wi-Fi, device, interface, and full-scan snapshots while opening details or returning within a screen. Only an explicit Refresh action invokes a use case again. Nearby network and access-point selection continues through the M5 application service, device refresh runs M6 followed by M7, full scan uses M8, and report export passes one M8 snapshot to M9 for one or both formats.
+
+Current Network collects M1 once per explicit refresh, supplies those interfaces to M2, and supplies both results to the association-aware M3 entry point. This avoids repeating interface and current Wi-Fi association collection within the same interactive refresh.
+
+The root dispatch requires both stdin and stdout to be terminals. Non-TTY execution prints help without reading input. EOF exits normally, while `Ctrl+C` returns 130 through the interactive boundary without changing the operational exception policy of individual use cases.
+
 PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
 
 Future Windows APIs and structured operating-system sources will follow the same priority. Localized textual commands remain last-resort fallbacks with dedicated parsers and sanitized fixtures.
