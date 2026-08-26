@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from wlanscope.domain.full_scan import FullNetworkSnapshot
 from wlanscope.domain.nearby_wifi import WifiNetwork
-from wlanscope.domain.wifi import WifiSsid
+from wlanscope.domain.wifi import WifiAuthCipherCapabilities, WifiSsid
 from wlanscope.reporting.json_report import REPORT_SCHEMA_VERSION
 from wlanscope.version import __version__
 
@@ -99,6 +99,28 @@ def _render_interfaces(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
                 str(item.mtu) if item.mtu else "Unknown",
             )
         )
+        if item.statistics is not None:
+            received = _value(
+                str(item.statistics.received_bytes)
+                if item.statistics.received_bytes is not None
+                else None
+            )
+            sent = _value(
+                str(item.statistics.sent_bytes) if item.statistics.sent_bytes is not None else None
+            )
+            errors = (
+                item.statistics.received_errors + item.statistics.outbound_errors
+                if item.statistics.received_errors is not None
+                and item.statistics.outbound_errors is not None
+                else None
+            )
+            lines.extend(
+                (
+                    f"- Interface {item.interface_index} counters: "
+                    f"received {received} bytes; sent {sent} bytes; "
+                    f"errors {_value(str(errors) if errors is not None else None)}",
+                )
+            )
 
 
 def _render_current_wifi(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
@@ -126,15 +148,40 @@ def _render_current_wifi(snapshot: FullNetworkSnapshot, lines: list[str]) -> Non
                 f"- SSID: {_ssid_display(connection.ssid)}",
                 f"- SSID raw hex: `{connection.ssid.raw.hex()}`",
                 f"- BSSID: {connection.bssid}",
+                "- BSS type: "
+                f"{_value(connection.bss_type.display_name if connection.bss_type else None)}",
                 f"- Profile: {_value(connection.profile_name)}",
                 f"- PHY: {escape_markdown(connection.phy_type.display_name)}",
                 f"- Signal quality: {connection.signal_quality}%",
+                f"- RSSI: {interface.rssi_dbm} dBm"
+                if interface.rssi_dbm is not None
+                else "- RSSI: Unavailable",
+                f"- Channel: {interface.channel_number}"
+                if interface.channel_number is not None
+                else "- Channel: Unavailable",
+                f"- Operation mode: native value `0x{interface.operation_mode:08X}`"
+                if interface.operation_mode is not None
+                else "- Operation mode: Unavailable",
                 "- Authentication: "
                 f"{escape_markdown(connection.security.authentication.display_name)}",
                 f"- Cipher: {escape_markdown(connection.security.cipher.display_name)}",
                 "",
             )
         )
+        if interface.capabilities is not None:
+            phys = ", ".join(phy.display_name for phy in interface.capabilities.supported_phy_types)
+            lines.extend(
+                (
+                    f"- Supported PHY types: {escape_markdown(phys) or 'Unknown'}",
+                    "- 802.11d supported: "
+                    f"{'Yes' if interface.capabilities.dot11d_supported else 'No'}",
+                    "- Infrastructure auth/cipher capabilities: "
+                    f"{_markdown_auth_cipher(interface.capabilities.infrastructure_security)}",
+                    "- Ad hoc auth/cipher capabilities: "
+                    f"{_markdown_auth_cipher(interface.capabilities.adhoc_security)}",
+                    "",
+                )
+            )
 
 
 def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
@@ -146,8 +193,8 @@ def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> 
         (
             "### IP Assignments",
             "",
-            "| Interface | Address | Prefix | Network | DAD state |",
-            "|---:|---|---:|---|---|",
+            "| Interface | Address | Prefix | Network | Classification | Origin | DAD state |",
+            "|---:|---|---:|---|---|---|---|",
         )
     )
     for context in network.interfaces:
@@ -158,6 +205,9 @@ def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> 
                     str(assignment.address),
                     str(assignment.prefix_length),
                     str(assignment.network),
+                    ", ".join(assignment.classifications) or "Unknown",
+                    f"{assignment.prefix_origin.display_name} / "
+                    f"{assignment.address_origin.display_name}",
                     assignment.dad_state.display_name,
                 )
             )
@@ -169,17 +219,45 @@ def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> 
             else "Unavailable"
         )
         suffix = _value(context.dns.suffix if context.dns else None)
+        dns_registration = (
+            _optional_boolean(context.dns.registration_enabled) if context.dns else "Unavailable"
+        )
+        dns_suffix_registration = (
+            _optional_boolean(context.dns.suffix_registration_enabled)
+            if context.dns
+            else "Unavailable"
+        )
+        lease_obtained = _value(
+            context.dhcp.lease_obtained.isoformat() if context.dhcp.lease_obtained else None
+        )
+        lease_expires = _value(
+            context.dhcp.lease_expires.isoformat() if context.dhcp.lease_expires else None
+        )
         lines.extend(
             (
                 f"- Interface {context.interface_index}",
                 f"  - DNS servers: {escape_markdown(servers)}",
                 f"  - DNS suffix: {suffix}",
+                f"  - DNS address registration: {dns_registration}",
+                f"  - DNS suffix registration: {dns_suffix_registration}",
                 f"  - DHCP IPv4: {context.dhcp.ipv4_state.value}",
                 f"  - DHCP IPv6: {context.dhcp.ipv6_state.value}",
                 "  - DHCP server: "
                 f"{_value(str(context.dhcp.server) if context.dhcp.server else None)}",
+                f"  - DHCP lease obtained: {lease_obtained}",
+                f"  - DHCP lease expires: {lease_expires}",
             )
         )
+        if context.profile is not None:
+            lines.extend(
+                (
+                    f"  - Network profile: {_value(context.profile.name)}",
+                    f"  - Profile interface alias: {_value(context.profile.interface_alias)}",
+                    f"  - Network category: {_value(context.profile.category)}",
+                    f"  - IPv4 connectivity: {context.profile.ipv4_connectivity.value}",
+                    f"  - IPv6 connectivity: {context.profile.ipv6_connectivity.value}",
+                )
+            )
     lines.extend(("", "### Default Routes", ""))
     if not network.default_routes:
         lines.append("No default routes were reported.")
@@ -256,6 +334,18 @@ def _render_access_points(index: int, network: WifiNetwork, lines: list[str]) ->
                 str(access_point.channel) if access_point.channel is not None else "Unknown",
             )
         )
+        rates = ", ".join(f"{rate:g}" for rate in access_point.supported_rates_mbps)
+        flags = ", ".join(access_point.capability_flags)
+        rsn = access_point.information_elements.rsn
+        lines.extend(
+            (
+                f"- {access_point.bssid} supported rates: "
+                f"{escape_markdown(rates) if rates else 'Unavailable'} Mbps",
+                f"- {access_point.bssid} capabilities: "
+                f"{escape_markdown(flags) if flags else 'None reported'}",
+                f"- {access_point.bssid} RSN: {'Present' if rsn is not None else 'Unavailable'}",
+            )
+        )
 
 
 def _render_devices(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
@@ -288,10 +378,32 @@ def _render_devices(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
                 ),
             )
         )
+        if host.is_router:
+            lines.append(f"- {host.address}: router indication reported by neighbor cache")
+        lines.append(
+            f"- {host.address}: address classification "
+            f"{escape_markdown(', '.join(host.address_classifications) or 'Unknown')}"
+        )
+        if host.mac_address is not None:
+            lines.append(
+                f"- {host.address}: locally administered MAC "
+                f"{'Yes' if host.mac_address.is_locally_administered else 'No'}"
+            )
 
 
 def _row(*values: str) -> str:
     return "| " + " | ".join(escape_markdown(value) for value in values) + " |"
+
+
+def _markdown_auth_cipher(item: WifiAuthCipherCapabilities) -> str:
+    if not item.pairs:
+        return item.state.value
+    return escape_markdown(
+        ", ".join(
+            f"{pair.authentication.display_name} / {pair.cipher.display_name}"
+            for pair in item.pairs
+        )
+    )
 
 
 def _ssid_plain(ssid: WifiSsid) -> str:
@@ -304,6 +416,12 @@ def _ssid_display(ssid: WifiSsid) -> str:
 
 def _value(value: str | None) -> str:
     return escape_markdown(value) if value else "Unavailable"
+
+
+def _optional_boolean(value: bool | None) -> str:
+    if value is None:
+        return "Unavailable"
+    return "Yes" if value else "No"
 
 
 def _timestamp(value: datetime) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from ipaddress import (
     IPv4Address,
@@ -99,12 +100,40 @@ class DhcpState(Enum):
     UNKNOWN = "Unknown"
 
 
+class NetworkConnectivity(Enum):
+    DISCONNECTED = "Disconnected"
+    NO_TRAFFIC = "No traffic"
+    SUBNET = "Subnet"
+    LOCAL_NETWORK = "Local network"
+    INTERNET = "Internet"
+    UNKNOWN = "Unknown"
+
+
 class NetworkIssueSource(Enum):
     IP_HELPER_ENRICHMENT = "IP Helper adapter enrichment"
     DNS_AND_METRICS = "DNS and interface metrics"
     DHCP = "DHCP enrichment"
     INTERFACE_ASSOCIATION = "Interface association"
     WIFI_ASSOCIATION = "Wi-Fi association"
+    NETWORK_PROFILE = "Network profile"
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkProfile:
+    interface_index: int
+    name: str | None
+    category: str | None
+    ipv4_connectivity: NetworkConnectivity
+    ipv6_connectivity: NetworkConnectivity
+    interface_alias: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.interface_index < 0:
+            raise ValueError("Interface index cannot be negative")
+
+    @property
+    def provenance(self) -> str:
+        return "Get-NetConnectionProfile"
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +164,23 @@ class IpAddressAssignment:
     @property
     def network(self) -> IpNetwork:
         return ip_network((self.address, self.prefix_length), strict=False)
+
+    @property
+    def classifications(self) -> tuple[str, ...]:
+        labels: list[str] = []
+        for present, label in (
+            (self.address.is_global, "Global"),
+            (self.address.is_private, "Private"),
+            (self.address.is_loopback, "Loopback"),
+            (self.address.is_link_local, "Link-local"),
+            (self.address.is_multicast, "Multicast"),
+            (self.address.is_unspecified, "Unspecified"),
+        ):
+            if present:
+                labels.append(label)
+        if isinstance(self.address, IPv6Address) and int(self.address) >> 121 == 0b1111110:
+            labels.append("Unique-local")
+        return tuple(labels)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,12 +216,22 @@ class Route:
             return None
         return self.route_metric + self.interface_metric
 
+    @property
+    def is_on_link(self) -> bool:
+        return self.next_hop.is_unspecified
+
 
 @dataclass(frozen=True, slots=True)
 class DnsConfiguration:
     interface_index: int
     servers: tuple[IpAddress, ...]
     suffix: str | None = None
+    registration_enabled: bool | None = None
+    suffix_registration_enabled: bool | None = None
+
+    @property
+    def provenance(self) -> str:
+        return "Get-DnsClient and Get-DnsClientServerAddress"
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +240,14 @@ class DhcpConfiguration:
     ipv4_state: DhcpState
     ipv6_state: DhcpState
     server: IPv4Address | None = None
+    lease_obtained: datetime | None = None
+    lease_expires: datetime | None = None
+
+    @property
+    def lease_provenance(self) -> str | None:
+        if self.lease_obtained is None and self.lease_expires is None:
+            return None
+        return "Win32_NetworkAdapterConfiguration"
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +258,7 @@ class InterfaceNetworkContext:
     dhcp: DhcpConfiguration
     network_interface: NetworkInterface | None = None
     wifi_interface: WifiInterfaceSnapshot | None = None
+    profile: NetworkProfile | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +284,13 @@ class InterfaceNetworkEnrichment:
     dhcp_state: DhcpState
     dns_servers: tuple[IpAddress, ...]
     dns_suffix: str | None
+    profile_name: str | None = None
+    profile_interface_alias: str | None = None
+    network_category: str | None = None
+    ipv4_connectivity: NetworkConnectivity = NetworkConnectivity.UNKNOWN
+    ipv6_connectivity: NetworkConnectivity = NetworkConnectivity.UNKNOWN
+    dns_registration_enabled: bool | None = None
+    dns_suffix_registration_enabled: bool | None = None
 
     def __post_init__(self) -> None:
         if self.address_family not in {4, 6}:
@@ -234,6 +306,8 @@ class DhcpEnrichment:
     interface_index: int
     enabled: bool
     server: IPv4Address | None
+    lease_obtained: datetime | None = None
+    lease_expires: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

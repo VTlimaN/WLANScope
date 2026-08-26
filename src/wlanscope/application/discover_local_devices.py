@@ -259,6 +259,7 @@ def _merge_neighbors(
                 ReachabilityState.NOT_PROBED,
                 frozenset({DiscoverySource.NEIGHBOR_CACHE}),
                 neighbor.state,
+                neighbor.is_router,
             ),
             issues,
         )
@@ -331,6 +332,7 @@ def _merge_host(
         reachability=_preferred_reachability(existing.reachability, candidate.reachability),
         sources=existing.sources | candidate.sources,
         neighbor_state=candidate.neighbor_state or existing.neighbor_state,
+        is_router=existing.is_router or candidate.is_router,
     )
 
 

@@ -19,6 +19,7 @@ from wlanscope.domain.network import (
 )
 from wlanscope.domain.wifi import (
     NativeWifiValue,
+    WifiAuthCipherCapabilities,
     WifiConnection,
     WifiInterfaceSnapshot,
     WifiSsid,
@@ -110,6 +111,34 @@ def _interface(item: NetworkInterface) -> dict[str, JsonValue]:
         "manufacturer": _optional_text(item.manufacturer),
         "driver_description": _optional_text(item.driver_description),
         "driver_version": _optional_text(item.driver_version),
+        "statistics": (
+            {
+                "received_bytes": item.statistics.received_bytes,
+                "sent_bytes": item.statistics.sent_bytes,
+                "received_unicast_packets": item.statistics.received_unicast_packets,
+                "sent_unicast_packets": item.statistics.sent_unicast_packets,
+                "received_multicast_packets": item.statistics.received_multicast_packets,
+                "sent_multicast_packets": item.statistics.sent_multicast_packets,
+                "received_broadcast_packets": item.statistics.received_broadcast_packets,
+                "sent_broadcast_packets": item.statistics.sent_broadcast_packets,
+                "received_discards": item.statistics.received_discards,
+                "outbound_discards": item.statistics.outbound_discards,
+                "received_errors": item.statistics.received_errors,
+                "outbound_errors": item.statistics.outbound_errors,
+                "provenance": item.statistics.provenance,
+            }
+            if item.statistics
+            else None
+        ),
+        "hardware": (
+            {
+                "connector_present": item.hardware.connector_present,
+                "driver_date": _optional_text(item.hardware.driver_date),
+                "device_id": _optional_text(item.hardware.device_id),
+            }
+            if item.hardware
+            else None
+        ),
     }
 
 
@@ -138,6 +167,62 @@ def _wifi_interface(item: WifiInterfaceSnapshot) -> dict[str, JsonValue]:
             item.network_interface.interface_index if item.network_interface else None
         ),
         "connection": _wifi_connection(item.connection) if item.connection else None,
+        "provenance": item.provenance,
+        "channel_number": item.channel_number,
+        "rssi_dbm": item.rssi_dbm,
+        "operation_mode": item.operation_mode,
+        "management_frame_protection_capable": item.management_frame_protection_capable,
+        "capabilities": (
+            {
+                "interface_type": item.capabilities.interface_type,
+                "dot11d_supported": item.capabilities.dot11d_supported,
+                "maximum_desired_ssids": item.capabilities.maximum_desired_ssids,
+                "maximum_desired_bssids": item.capabilities.maximum_desired_bssids,
+                "supported_phy_types": [
+                    _native(phy) for phy in item.capabilities.supported_phy_types
+                ],
+                "infrastructure_security": _auth_cipher_capabilities(
+                    item.capabilities.infrastructure_security
+                ),
+                "adhoc_security": _auth_cipher_capabilities(item.capabilities.adhoc_security),
+            }
+            if item.capabilities
+            else None
+        ),
+        "radio_states": [
+            {
+                "phy_index": state.phy_index,
+                "software_state": _native(state.software_state),
+                "hardware_state": _native(state.hardware_state),
+            }
+            for state in item.radio_states
+        ],
+        "statistics": (
+            {
+                "four_way_handshake_failures": item.statistics.four_way_handshake_failures,
+                "tkip_countermeasures": item.statistics.tkip_countermeasures,
+                "unicast_transmitted_frames": item.statistics.unicast_transmitted_frames,
+                "unicast_received_frames": item.statistics.unicast_received_frames,
+                "multicast_transmitted_frames": item.statistics.multicast_transmitted_frames,
+                "multicast_received_frames": item.statistics.multicast_received_frames,
+                "decrypt_successes": item.statistics.decrypt_successes,
+                "decrypt_failures": item.statistics.decrypt_failures,
+                "phy_counters": [
+                    {
+                        "phy_index": counter.phy_index,
+                        "transmitted_frames": counter.transmitted_frames,
+                        "received_frames": counter.received_frames,
+                        "failed_transmissions": counter.failed_transmissions,
+                        "retry_frames": counter.retry_frames,
+                        "multiple_retry_frames": counter.multiple_retry_frames,
+                        "fcs_errors": counter.fcs_errors,
+                    }
+                    for counter in item.statistics.phy_counters
+                ],
+            }
+            if item.statistics
+            else None
+        ),
     }
 
 
@@ -145,6 +230,7 @@ def _wifi_connection(item: WifiConnection) -> dict[str, JsonValue]:
     return {
         "state": _native(item.state),
         "mode": _native(item.mode),
+        "bss_type": _native(item.bss_type) if item.bss_type is not None else None,
         "profile_name": _optional_text(item.profile_name),
         "ssid": _ssid(item.ssid),
         "bssid": str(item.bssid),
@@ -157,6 +243,19 @@ def _wifi_connection(item: WifiConnection) -> dict[str, JsonValue]:
             "authentication": _native(item.security.authentication),
             "cipher": _native(item.security.cipher),
         },
+    }
+
+
+def _auth_cipher_capabilities(item: WifiAuthCipherCapabilities) -> dict[str, JsonValue]:
+    return {
+        "state": item.state.name.lower(),
+        "pairs": [
+            {
+                "authentication": _native(pair.authentication),
+                "cipher": _native(pair.cipher),
+            }
+            for pair in item.pairs
+        ],
     }
 
 
@@ -181,6 +280,9 @@ def _network_context(item: InterfaceNetworkContext) -> dict[str, JsonValue]:
             {
                 "servers": [str(server) for server in item.dns.servers],
                 "suffix": _optional_text(item.dns.suffix),
+                "registration_enabled": item.dns.registration_enabled,
+                "suffix_registration_enabled": item.dns.suffix_registration_enabled,
+                "provenance": item.dns.provenance,
             }
             if item.dns
             else None
@@ -189,7 +291,26 @@ def _network_context(item: InterfaceNetworkContext) -> dict[str, JsonValue]:
             "ipv4_state": _enum(item.dhcp.ipv4_state),
             "ipv6_state": _enum(item.dhcp.ipv6_state),
             "server": str(item.dhcp.server) if item.dhcp.server else None,
+            "lease_obtained": (
+                _timestamp(item.dhcp.lease_obtained) if item.dhcp.lease_obtained else None
+            ),
+            "lease_expires": (
+                _timestamp(item.dhcp.lease_expires) if item.dhcp.lease_expires else None
+            ),
+            "lease_provenance": item.dhcp.lease_provenance,
         },
+        "profile": (
+            {
+                "name": _optional_text(item.profile.name),
+                "interface_alias": _optional_text(item.profile.interface_alias),
+                "category": _optional_text(item.profile.category),
+                "ipv4_connectivity": _enum(item.profile.ipv4_connectivity),
+                "ipv6_connectivity": _enum(item.profile.ipv6_connectivity),
+                "provenance": item.profile.provenance,
+            }
+            if item.profile
+            else None
+        ),
         "network_interface_id": (
             _text(item.network_interface.stable_id) if item.network_interface else None
         ),
@@ -211,6 +332,7 @@ def _assignment(item: IpAddressAssignment) -> dict[str, JsonValue]:
         "valid_lifetime_seconds": item.valid_lifetime_seconds,
         "skip_as_source": item.skip_as_source,
         "scope_id": item.scope_id,
+        "classifications": list(item.classifications),
     }
 
 
@@ -227,6 +349,7 @@ def _route(item: Route) -> dict[str, JsonValue]:
         "protocol": _native(item.protocol),
         "origin": _native(item.origin),
         "is_default": item.is_default,
+        "is_on_link": item.is_on_link,
     }
 
 
@@ -263,6 +386,9 @@ def _wifi_network(item: WifiNetwork) -> dict[str, JsonValue]:
         "cipher": _native(item.cipher),
         "reported_bss_count": item.reported_bss_count,
         "observed_bss_count": len(item.access_points),
+        "bss_type": item.bss_type,
+        "not_connectable_reason": item.not_connectable_reason,
+        "supported_phy_types": [_native(phy) for phy in item.supported_phy_types],
         "access_points": [_access_point(access_point) for access_point in item.access_points],
     }
 
@@ -279,9 +405,19 @@ def _access_point(item: WifiAccessPoint) -> dict[str, JsonValue]:
         "band": _enum(item.band),
         "channel": item.channel,
         "beacon_period_tu": item.beacon_period_tu,
+        "beacon_interval_microseconds": item.beacon_interval_microseconds,
         "capability_information": item.capability_information,
         "timestamp_us": item.timestamp_us,
         "host_timestamp": item.host_timestamp,
+        "host_observed_at": _timestamp(item.host_observed_at) if item.host_observed_at else None,
+        "phy_id": item.phy_id,
+        "bss_type": item.bss_type,
+        "in_reg_domain": item.in_reg_domain,
+        "supported_rates_mbps": list(item.supported_rates_mbps),
+        "basic_rates_mbps": list(item.basic_rates_mbps),
+        "capability_flags": list(item.capability_flags),
+        "information_elements": _information_elements(item),
+        "provenance": item.provenance,
     }
 
 
@@ -327,6 +463,11 @@ def _host(item: EnrichedHost) -> dict[str, JsonValue]:
         "reachability": _enum(discovered.reachability),
         "discovery_sources": sources,
         "neighbor_state": _neighbor_state(discovered.neighbor_state),
+        "router_indication": discovered.is_router,
+        "address_classifications": list(discovered.address_classifications),
+        "mac_locally_administered": (
+            discovered.mac_address.is_locally_administered if discovered.mac_address else None
+        ),
         "hostname": {
             "state": _enum(item.hostname.state),
             "value": _optional_text(item.hostname.hostname),
@@ -337,6 +478,38 @@ def _host(item: EnrichedHost) -> dict[str, JsonValue]:
             "value": _optional_text(item.vendor.vendor),
             "source": _enum(item.vendor.source) if item.vendor.source else None,
         },
+    }
+
+
+def _information_elements(item: WifiAccessPoint) -> dict[str, JsonValue]:
+    summary = item.information_elements
+    rsn = summary.rsn
+    return {
+        "available": summary.available,
+        "supported_rates_mbps": list(summary.supported_rates_mbps),
+        "country_code": summary.country_code,
+        "rsn": (
+            {
+                "version": rsn.version,
+                "group_cipher": rsn.group_cipher,
+                "pairwise_ciphers": list(rsn.pairwise_ciphers),
+                "akm_suites": list(rsn.akm_suites),
+                "mfp_capable": rsn.mfp_capable,
+                "mfp_required": rsn.mfp_required,
+                "group_management_cipher": rsn.group_management_cipher,
+            }
+            if rsn
+            else None
+        ),
+        "ht_capabilities_present": summary.ht_capabilities_present,
+        "ht_operation_present": summary.ht_operation_present,
+        "vht_capabilities_present": summary.vht_capabilities_present,
+        "vht_operation_present": summary.vht_operation_present,
+        "extended_capabilities_present": summary.extended_capabilities_present,
+        "extension_element_ids": list(summary.extension_element_ids),
+        "vendor_specific_ouis": list(summary.vendor_specific_ouis),
+        "unknown_element_ids": list(summary.unknown_element_ids),
+        "malformed": summary.malformed,
     }
 
 

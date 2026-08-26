@@ -12,11 +12,19 @@ from wlanscope.domain.wifi import (
 from wlanscope.platform.windows.native_wifi import (
     NativeWifiCollector,
     NativeWifiSession,
+    _Dot11AuthCipherPair,
     _Guid,
     _guid_from_text,
+    _WlanAuthCipherPairList,
     _WlanConnectionAttributes,
+    _WlanInterfaceCapability,
     _WlanInterfaceInfo,
     _WlanInterfaceInfoList,
+    _WlanMacFrameStatistics,
+    _WlanPhyFrameStatistics,
+    _WlanPhyRadioState,
+    _WlanRadioState,
+    _WlanStatisticsHeader,
 )
 
 _FIRST_ID = "aaaaaaaa-0000-0000-0000-000000000001"
@@ -28,6 +36,9 @@ def test_native_struct_layouts_match_windows_abi() -> None:
     assert ctypes.sizeof(_WlanInterfaceInfo) == 532
     assert _WlanInterfaceInfoList.items.offset == 8
     assert ctypes.sizeof(_WlanConnectionAttributes) == 604
+    assert ctypes.sizeof(_Dot11AuthCipherPair) == 8
+    assert _WlanAuthCipherPairList.items.offset == 4
+    assert ctypes.sizeof(_WlanPhyFrameStatistics) == 144
 
 
 def test_session_opens_and_closes_handle() -> None:
@@ -115,6 +126,8 @@ def test_collector_converts_current_connection() -> None:
     assert connection.transmit_rate_kbps == 433_300
     assert connection.security.authentication.display_name == "RSNA"
     assert connection.security.cipher.display_name == "CCMP"
+    assert connection.bss_type is not None
+    assert connection.bss_type.display_name == "Infrastructure"
     assert len(bindings.freed_addresses) == 2
 
 
@@ -200,6 +213,104 @@ def test_error_result_with_buffer_releases_memory() -> None:
     assert len(bindings.freed_addresses) == 2
 
 
+def test_collector_reads_optional_deep_wifi_details() -> None:
+    bindings = DeepFakeBindings(
+        interfaces=((_FIRST_ID, "Sanitized adapter", 1),),
+        connections={_FIRST_ID: (0, _connection_attributes())},
+    )
+
+    interface = NativeWifiCollector(bindings).collect().interfaces[0]
+
+    assert interface.capabilities is not None
+    assert interface.capabilities.dot11d_supported
+    assert [item.display_name for item in interface.capabilities.supported_phy_types] == [
+        "HT",
+        "VHT",
+    ]
+    assert interface.channel_number == 36
+    assert interface.rssi_dbm == -51
+    assert interface.operation_mode == 1
+    assert interface.management_frame_protection_capable
+    assert interface.radio_states[0].software_state.display_name == "On"
+    assert interface.capabilities.infrastructure_security.pairs[0].authentication.display_name == (
+        "RSNA-PSK"
+    )
+    assert interface.capabilities.adhoc_security.pairs[0].cipher.display_name == "CCMP"
+    assert interface.statistics is not None
+    assert interface.statistics.unicast_transmitted_frames == 10
+    assert interface.statistics.decrypt_successes == 15
+    assert interface.statistics.phy_counters[0].retry_frames == 4
+    assert interface.statistics.phy_counters[0].fcs_errors == 6
+    assert len(bindings.freed_addresses) == 11
+
+
+def test_malformed_optional_capability_is_localized_and_memory_is_freed() -> None:
+    bindings = DeepFakeBindings(
+        interfaces=((_FIRST_ID, "Sanitized adapter", 4),),
+        malformed_capability=True,
+    )
+
+    snapshot = NativeWifiCollector(bindings).collect()
+
+    assert snapshot.interfaces[0].capabilities is None
+    assert snapshot.is_partial
+    assert "supported PHY count" in snapshot.issues[0].message
+    assert len(bindings.freed_addresses) == 2
+
+
+def test_malformed_auth_cipher_list_is_localized_and_memory_is_freed() -> None:
+    bindings = DeepFakeBindings(
+        interfaces=((_FIRST_ID, "Sanitized adapter", 4),),
+        malformed_auth_pairs=True,
+    )
+
+    snapshot = NativeWifiCollector(bindings).collect()
+
+    assert snapshot.interfaces[0].capabilities is None
+    assert "auth/cipher" in snapshot.issues[0].message
+    assert bindings._allocations == {}
+
+
+def test_unsupported_auth_cipher_capability_is_explicit() -> None:
+    bindings = DeepFakeBindings(
+        interfaces=((_FIRST_ID, "Sanitized adapter", 4),),
+        unsupported_auth_pairs=True,
+    )
+
+    interface = NativeWifiCollector(bindings).collect().interfaces[0]
+
+    assert interface.capabilities is not None
+    assert interface.capabilities.infrastructure_security.state.name == "UNSUPPORTED"
+    assert interface.capabilities.adhoc_security.state.name == "UNSUPPORTED"
+    assert bindings._allocations == {}
+
+
+def test_malformed_phy_statistics_is_localized_and_memory_is_freed() -> None:
+    bindings = DeepFakeBindings(
+        interfaces=((_FIRST_ID, "Sanitized adapter", 4),),
+        malformed_phy_statistics=True,
+    )
+
+    snapshot = NativeWifiCollector(bindings).collect()
+
+    assert snapshot.interfaces[0].statistics is None
+    assert "PHY statistics" in snapshot.issues[0].message
+    assert bindings._allocations == {}
+
+
+def test_short_optional_query_buffer_is_localized_and_freed() -> None:
+    bindings = DeepFakeBindings(
+        interfaces=((_FIRST_ID, "Sanitized adapter", 4),),
+        short_channel_buffer=True,
+    )
+
+    snapshot = NativeWifiCollector(bindings).collect()
+
+    assert snapshot.interfaces[0].channel_number is None
+    assert "truncated WLAN query buffer" in snapshot.issues[0].message
+    assert bindings._allocations == {}
+
+
 class FakeBindings:
     def __init__(
         self,
@@ -259,6 +370,126 @@ class FakeBindings:
         self._allocations.pop(address)
 
 
+class DeepFakeBindings(FakeBindings):
+    def __init__(
+        self,
+        open_result: int = 0,
+        interfaces: tuple[tuple[str, str, int], ...] = (),
+        connections: dict[str, tuple[int, _WlanConnectionAttributes | None]] | None = None,
+        malformed_capability: bool = False,
+        malformed_auth_pairs: bool = False,
+        unsupported_auth_pairs: bool = False,
+        malformed_phy_statistics: bool = False,
+        short_channel_buffer: bool = False,
+    ) -> None:
+        super().__init__(open_result, interfaces, connections)
+        self.malformed_capability = malformed_capability
+        self.malformed_auth_pairs = malformed_auth_pairs
+        self.unsupported_auth_pairs = unsupported_auth_pairs
+        self.malformed_phy_statistics = malformed_phy_statistics
+        self.short_channel_buffer = short_channel_buffer
+
+    def get_interface_capability(self, handle: int, interface_id: str) -> tuple[int, int]:
+        value = _WlanInterfaceCapability()
+        value.interface_type = 0
+        value.dot11d_supported = 1
+        value.maximum_desired_ssids = 16
+        value.maximum_desired_bssids = 16
+        value.number_of_supported_phys = 65 if self.malformed_capability else 2
+        value.phy_types[0] = 7
+        value.phy_types[1] = 8
+        return 0, self._allocate(value)
+
+    def query_interface(self, handle: int, interface_id: str, opcode: int) -> tuple[int, int, int]:
+        value: _WlanRadioState | ctypes.c_ulong | ctypes.c_long | _WlanStatisticsHeader
+        if opcode == 4:
+            value = _WlanRadioState()
+            value.number_of_phys = 1
+            value.states[0] = _WlanPhyRadioState(0, 1, 1)
+        elif opcode == 8:
+            value = ctypes.c_ulong(36)
+            if self.short_channel_buffer:
+                address = self._allocate(value)
+                return 0, address, 1
+        elif opcode in {9, 10}:
+            if self.unsupported_auth_pairs:
+                return 50, 0, 0
+            return self._auth_cipher_pairs(opcode == 9 and self.malformed_auth_pairs)
+        elif opcode == 12:
+            value = ctypes.c_ulong(1)
+        elif opcode == 16:
+            value = ctypes.c_long(1)
+        elif opcode == 0x10000101:
+            return self._statistics()
+        elif opcode == 0x10000102:
+            value = ctypes.c_long(-51)
+        else:
+            return 50, 0, 0
+        address = self._allocate(value)
+        return 0, address, ctypes.sizeof(value)
+
+    def _auth_cipher_pairs(self, malformed: bool) -> tuple[int, int, int]:
+        size = _WlanAuthCipherPairList.items.offset + ctypes.sizeof(_Dot11AuthCipherPair)
+        buffer = ctypes.create_string_buffer(size)
+        address = ctypes.addressof(buffer)
+        value = _WlanAuthCipherPairList.from_address(address)
+        value.number_of_items = 2 if malformed else 1
+        item = _Dot11AuthCipherPair.from_address(address + _WlanAuthCipherPairList.items.offset)
+        item.authentication = 7
+        item.cipher = 4
+        self._allocations[address] = buffer
+        return 0, address, size
+
+    def _statistics(self) -> tuple[int, int, int]:
+        size = ctypes.sizeof(_WlanStatisticsHeader) + ctypes.sizeof(_WlanPhyFrameStatistics)
+        buffer = ctypes.create_string_buffer(size)
+        address = ctypes.addressof(buffer)
+        value = _WlanStatisticsHeader.from_address(address)
+        value.four_way_handshake_failures = 1
+        value.tkip_countermeasures = 2
+        value.unicast = _mac_statistics(10, 11, 12, 13)
+        value.multicast = _mac_statistics(20, 21, 3, 4)
+        value.number_of_phys = 1
+        phy = _WlanPhyFrameStatistics.from_address(address + ctypes.sizeof(_WlanStatisticsHeader))
+        phy.transmitted = 1
+        phy.received = 2
+        phy.failed = 3
+        phy.retry = 4
+        phy.multiple_retry = 5
+        phy.fcs_errors = 6
+        if self.malformed_phy_statistics:
+            value.number_of_phys = 2
+        self._allocations[address] = buffer
+        return 0, address, size
+
+    def _allocate(
+        self,
+        value: (
+            _WlanInterfaceCapability
+            | _WlanRadioState
+            | ctypes.c_ulong
+            | ctypes.c_long
+            | _WlanStatisticsHeader
+        ),
+    ) -> int:
+        buffer = ctypes.create_string_buffer(ctypes.sizeof(value))
+        ctypes.memmove(buffer, ctypes.byref(value), ctypes.sizeof(value))
+        address = ctypes.addressof(buffer)
+        self._allocations[address] = buffer
+        return address
+
+
+def _mac_statistics(
+    transmitted: int, received: int, decrypt_successes: int, decrypt_failures: int
+) -> _WlanMacFrameStatistics:
+    value = _WlanMacFrameStatistics()
+    value.transmitted = transmitted
+    value.received = received
+    value.decrypt_successes = decrypt_successes
+    value.decrypt_failures = decrypt_failures
+    return value
+
+
 def _connection_attributes(
     ssid: bytes = b"SANITIZED",
     trailing: bytes = b"",
@@ -272,6 +503,7 @@ def _connection_attributes(
         attributes.association.ssid.ssid[index] = octet
     for index, octet in enumerate(bytes.fromhex("020000000011")):
         attributes.association.bssid[index] = octet
+    attributes.association.bss_type = 1
     attributes.association.phy_type = 8
     attributes.association.signal_quality = 78
     attributes.association.receive_rate_kbps = 866_700

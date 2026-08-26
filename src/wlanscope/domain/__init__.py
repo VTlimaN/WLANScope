@@ -3,6 +3,8 @@ from wlanscope.domain.enrichment import EnrichedDeviceInventory, EnrichedHost
 from wlanscope.domain.full_scan import FullNetworkSnapshot, FullScanStatus
 from wlanscope.domain.interfaces import (
     AdapterEnrichment,
+    AdapterHardwareDetails,
+    AdapterStatistics,
     AdministrativeState,
     InterfaceCollectionError,
     InterfaceEnrichmentError,
@@ -13,12 +15,37 @@ from wlanscope.domain.interfaces import (
     NetworkInterface,
     OperationalState,
 )
-from wlanscope.domain.nearby_wifi import NearbyWifiSnapshot, WifiAccessPoint, WifiNetwork
-from wlanscope.domain.network import CurrentNetworkSnapshot, IpAddressAssignment, Route
-from wlanscope.domain.wifi import CurrentWifiSnapshot, WifiConnection, WifiInterfaceSnapshot
+from wlanscope.domain.nearby_wifi import (
+    NearbyWifiSnapshot,
+    WifiAccessPoint,
+    WifiInformationElementSummary,
+    WifiNetwork,
+    WifiRsnDetails,
+)
+from wlanscope.domain.network import (
+    CurrentNetworkSnapshot,
+    IpAddressAssignment,
+    NetworkConnectivity,
+    NetworkProfile,
+    Route,
+)
+from wlanscope.domain.wifi import (
+    CurrentWifiSnapshot,
+    WifiAuthCipherCapabilities,
+    WifiAuthCipherPair,
+    WifiBssType,
+    WifiCapabilityState,
+    WifiConnection,
+    WifiInterfaceCapabilities,
+    WifiInterfaceSnapshot,
+    WifiPhyStatistics,
+    WifiStatistics,
+)
 
 __all__ = (
     "AdapterEnrichment",
+    "AdapterHardwareDetails",
+    "AdapterStatistics",
     "AdministrativeState",
     "CurrentNetworkSnapshot",
     "CurrentWifiSnapshot",
@@ -37,11 +64,22 @@ __all__ = (
     "MacAddress",
     "MediaState",
     "NearbyWifiSnapshot",
+    "NetworkConnectivity",
     "NetworkInterface",
+    "NetworkProfile",
     "OperationalState",
     "Route",
     "WifiAccessPoint",
+    "WifiAuthCipherCapabilities",
+    "WifiAuthCipherPair",
+    "WifiBssType",
+    "WifiCapabilityState",
     "WifiConnection",
+    "WifiInformationElementSummary",
+    "WifiInterfaceCapabilities",
     "WifiInterfaceSnapshot",
     "WifiNetwork",
+    "WifiPhyStatistics",
+    "WifiRsnDetails",
+    "WifiStatistics",
 )

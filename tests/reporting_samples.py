@@ -26,6 +26,8 @@ from wlanscope.domain.full_scan import (
     ScanSectionStatus,
 )
 from wlanscope.domain.interfaces import (
+    AdapterHardwareDetails,
+    AdapterStatistics,
     AdministrativeState,
     InterfaceInventory,
     InterfaceKind,
@@ -38,7 +40,9 @@ from wlanscope.domain.nearby_wifi import (
     NearbyWifiInterface,
     NearbyWifiSnapshot,
     WifiAccessPoint,
+    WifiInformationElementSummary,
     WifiNetwork,
+    WifiRsnDetails,
 )
 from wlanscope.domain.network import (
     AddressOrigin,
@@ -49,6 +53,8 @@ from wlanscope.domain.network import (
     DnsConfiguration,
     InterfaceNetworkContext,
     IpAddressAssignment,
+    NetworkConnectivity,
+    NetworkProfile,
     PrefixOrigin,
     Route,
     RouteOrigin,
@@ -56,16 +62,25 @@ from wlanscope.domain.network import (
 )
 from wlanscope.domain.wifi import (
     CurrentWifiSnapshot,
+    WifiAuthCipherCapabilities,
+    WifiAuthCipherPair,
     WifiAuthentication,
     WifiBssid,
+    WifiBssType,
+    WifiCapabilityState,
     WifiCipher,
     WifiConnection,
     WifiConnectionMode,
+    WifiInterfaceCapabilities,
     WifiInterfaceSnapshot,
     WifiInterfaceState,
+    WifiPhyRadioState,
+    WifiPhyStatistics,
     WifiPhyType,
+    WifiRadioState,
     WifiSecurity,
     WifiSsid,
+    WifiStatistics,
 )
 
 INTERFACE_ID = "11111111-1111-1111-1111-111111111111"
@@ -128,6 +143,8 @@ def _interface(external_text: str) -> NetworkInterface:
         external_text,
         external_text,
         "1.0",
+        AdapterStatistics(1000, 2000, 10, 20, 3, 4, 5, 6, 1, 2, 0, 1),
+        AdapterHardwareDetails(True, "2026-01-02", "SANITIZED\\DEVICE"),
     )
 
 
@@ -148,8 +165,33 @@ def _wifi_interface(
         866_000,
         780_000,
         WifiSecurity(True, WifiAuthentication(7), WifiCipher(4)),
+        WifiBssType(1),
     )
-    return WifiInterfaceSnapshot(INTERFACE_ID, external_text, state, connection, interface)
+    return WifiInterfaceSnapshot(
+        INTERFACE_ID,
+        external_text,
+        state,
+        connection,
+        interface,
+        WifiInterfaceCapabilities(
+            0,
+            True,
+            16,
+            16,
+            (WifiPhyType(8), WifiPhyType(10)),
+            WifiAuthCipherCapabilities(
+                WifiCapabilityState.AVAILABLE,
+                (WifiAuthCipherPair(WifiAuthentication(7), WifiCipher(4)),),
+            ),
+            WifiAuthCipherCapabilities(WifiCapabilityState.UNSUPPORTED),
+        ),
+        36,
+        -51,
+        1,
+        True,
+        (WifiPhyRadioState(0, WifiRadioState(1), WifiRadioState(1)),),
+        WifiStatistics(1, 2, 10, 20, 3, 4, 100, 1, (WifiPhyStatistics(0, 9, 8, 1, 2, 1, 3),)),
+    )
 
 
 def _current_network(
@@ -189,6 +231,13 @@ def _current_network(
         DhcpConfiguration(7, DhcpState.ENABLED, DhcpState.UNKNOWN, IPv4Address("192.0.2.1")),
         interface,
         wifi,
+        NetworkProfile(
+            7,
+            external_text,
+            "Private",
+            NetworkConnectivity.INTERNET,
+            NetworkConnectivity.NO_TRAFFIC,
+        ),
     )
     routes = (
         Route(
@@ -227,6 +276,19 @@ def _nearby(ssid: WifiSsid, external_text: str) -> NearbyWifiSnapshot:
         1,
         10,
         20,
+        3,
+        1,
+        True,
+        (1.0, 2.0, 5.5),
+        (1.0,),
+        ("ESS", "Privacy"),
+        WifiInformationElementSummary(
+            available=True,
+            supported_rates_mbps=(1.0, 2.0, 5.5),
+            country_code="US",
+            rsn=WifiRsnDetails(1, "CCMP-128", ("CCMP-128",), ("PSK",), True, False),
+            ht_capabilities_present=True,
+        ),
     )
     network = WifiNetwork(
         INTERFACE_ID,
@@ -263,6 +325,7 @@ def _devices(external_text: str) -> EnrichedDeviceInventory:
         ReachabilityState.RESPONDED,
         frozenset({DiscoverySource.NEIGHBOR_CACHE, DiscoverySource.ICMP_RESPONSE}),
         NeighborState(5),
+        True,
     )
     discovered = DeviceInventory(plan, (host,), 1)
     enriched = EnrichedHost(

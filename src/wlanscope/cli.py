@@ -54,6 +54,7 @@ from wlanscope.domain.network import (
 )
 from wlanscope.domain.wifi import (
     CurrentWifiSnapshot,
+    WifiAuthCipherCapabilities,
     WifiCollectionError,
     WifiConnection,
     WifiInterfaceSnapshot,
@@ -759,6 +760,71 @@ def _create_wifi_table(interface: WifiInterfaceSnapshot) -> Table:
     )
     table.add_row("Interface", Text(name))
     table.add_row("State", interface.state.display_name)
+    table.add_row("Wi-Fi data source", interface.provenance)
+    table.add_row(
+        "Channel",
+        str(interface.channel_number) if interface.channel_number is not None else "Unavailable",
+    )
+    table.add_row(
+        "RSSI", f"{interface.rssi_dbm} dBm" if interface.rssi_dbm is not None else "Unavailable"
+    )
+    table.add_row(
+        "Operation mode",
+        f"Native value 0x{interface.operation_mode:08X}"
+        if interface.operation_mode is not None
+        else "Unavailable",
+    )
+    if interface.capabilities is not None:
+        table.add_row(
+            "Supported PHYs",
+            ", ".join(phy.display_name for phy in interface.capabilities.supported_phy_types)
+            or "Unknown",
+        )
+        table.add_row("802.11d support", "Yes" if interface.capabilities.dot11d_supported else "No")
+        table.add_row(
+            "Infrastructure security capabilities",
+            _format_auth_cipher_capabilities(interface.capabilities.infrastructure_security),
+        )
+        table.add_row(
+            "Ad hoc security capabilities",
+            _format_auth_cipher_capabilities(interface.capabilities.adhoc_security),
+        )
+    else:
+        table.add_row("Wi-Fi capabilities", "Unavailable")
+    if interface.radio_states:
+        table.add_row(
+            "Radio states",
+            "; ".join(
+                f"PHY {state.phy_index}: software {state.software_state.display_name}, "
+                f"hardware {state.hardware_state.display_name}"
+                for state in interface.radio_states
+            ),
+        )
+    else:
+        table.add_row("Radio states", "Unavailable")
+    table.add_row(
+        "MFP capability", _format_optional_boolean(interface.management_frame_protection_capable)
+    )
+    if interface.statistics is not None:
+        table.add_row(
+            "Wi-Fi frames",
+            f"Tx {interface.statistics.unicast_transmitted_frames}; "
+            f"Rx {interface.statistics.unicast_received_frames}",
+        )
+        table.add_row(
+            "Decrypt counters",
+            f"Success {interface.statistics.decrypt_successes}; "
+            f"Failure {interface.statistics.decrypt_failures}",
+        )
+        for counter in interface.statistics.phy_counters:
+            table.add_row(
+                f"PHY {counter.phy_index} statistics",
+                f"Tx {counter.transmitted_frames}; Rx {counter.received_frames}; "
+                f"failed {counter.failed_transmissions}; retries {counter.retry_frames}; "
+                f"FCS errors {counter.fcs_errors}",
+            )
+    else:
+        table.add_row("Wi-Fi statistics", "Unavailable")
     if interface.connection is not None:
         _add_connection_rows(table, interface.connection)
     return table
@@ -769,6 +835,9 @@ def _add_connection_rows(table: Table, connection: WifiConnection) -> None:
     table.add_row("SSID", Text(connection.ssid.display_text or "<Hidden or empty>"))
     table.add_row("BSSID", str(connection.bssid))
     table.add_row("Connection mode", connection.mode.display_name)
+    table.add_row(
+        "BSS type", connection.bss_type.display_name if connection.bss_type else "Unknown"
+    )
     table.add_row("Profile", Text(connection.profile_name or "Unavailable"))
     table.add_row("PHY", connection.phy_type.display_name)
     table.add_row("Signal", f"{connection.signal_quality}%")
@@ -777,6 +846,15 @@ def _add_connection_rows(table: Table, connection: WifiConnection) -> None:
     table.add_row("Security enabled", "Yes" if connection.security.enabled else "No")
     table.add_row("Authentication", connection.security.authentication.display_name)
     table.add_row("Cipher", connection.security.cipher.display_name)
+
+
+def _format_auth_cipher_capabilities(capabilities: WifiAuthCipherCapabilities) -> str:
+    if not capabilities.pairs:
+        return capabilities.state.value
+    return ", ".join(
+        f"{pair.authentication.display_name} / {pair.cipher.display_name}"
+        for pair in capabilities.pairs
+    )
 
 
 def _format_kilobits_per_second(value: int | None) -> str:
@@ -864,6 +942,8 @@ def _create_nearby_network_detail_table(details: NearbyWifiNetworkDetails) -> Ta
     table.add_row("Hidden", "Yes" if network.ssid.is_empty else "No")
     table.add_row("Interface", Text(network.interface_description))
     table.add_row("Connectable", "Yes" if network.connectable else "No")
+    if network.not_connectable_reason is not None:
+        table.add_row("Not-connectable reason", str(network.not_connectable_reason))
     table.add_row("Profile", Text(network.profile_name or "Unavailable"))
     table.add_row("Security enabled", _format_optional_boolean(network.security_enabled))
     table.add_row("Authentication", network.authentication.display_name)
@@ -921,6 +1001,13 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
     table.add_row("SSID", Text(access_point.ssid.display_text or "<Hidden>"))
     table.add_row("Interface identifier", Text(access_point.interface_id))
     table.add_row("PHY", access_point.phy_type.display_name)
+    table.add_row(
+        "PHY identifier", str(access_point.phy_id) if access_point.phy_id is not None else "Unknown"
+    )
+    table.add_row(
+        "BSS type", str(access_point.bss_type) if access_point.bss_type is not None else "Unknown"
+    )
+    table.add_row("In regulatory domain", _format_optional_boolean(access_point.in_reg_domain))
     table.add_row("Signal quality", f"{access_point.signal_quality}%")
     table.add_row("RSSI", f"{access_point.rssi_dbm} dBm")
     table.add_row("Center frequency", _format_center_frequency(access_point.center_frequency_khz))
@@ -931,7 +1018,8 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
     )
     table.add_row(
         "Beacon period",
-        f"{access_point.beacon_period_tu} TU"
+        f"{access_point.beacon_period_tu} TU "
+        f"({access_point.beacon_interval_microseconds} microseconds)"
         if access_point.beacon_period_tu is not None
         else "Unavailable",
     )
@@ -952,6 +1040,55 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
         str(access_point.host_timestamp)
         if access_point.host_timestamp is not None
         else "Unavailable",
+    )
+    table.add_row(
+        "Host observation time",
+        access_point.host_observed_at.isoformat()
+        if access_point.host_observed_at is not None
+        else "Unavailable",
+    )
+    table.add_row(
+        "Supported rates",
+        ", ".join(f"{rate:g} Mbps" for rate in access_point.supported_rates_mbps) or "Unavailable",
+    )
+    table.add_row(
+        "Basic rates",
+        ", ".join(f"{rate:g} Mbps" for rate in access_point.basic_rates_mbps) or "Unavailable",
+    )
+    table.add_row("Capability flags", ", ".join(access_point.capability_flags) or "None reported")
+    elements = access_point.information_elements
+    table.add_row("Advertised-data provenance", access_point.provenance)
+    table.add_row("Country", elements.country_code or "Unavailable")
+    table.add_row("RSN", "Present" if elements.rsn is not None else "Unavailable")
+    if elements.rsn is not None:
+        table.add_row("RSN group cipher", elements.rsn.group_cipher or "Unknown")
+        table.add_row("RSN pairwise ciphers", ", ".join(elements.rsn.pairwise_ciphers))
+        table.add_row("RSN AKM suites", ", ".join(elements.rsn.akm_suites))
+        table.add_row("MFP capable", _format_optional_boolean(elements.rsn.mfp_capable))
+        table.add_row("MFP required", _format_optional_boolean(elements.rsn.mfp_required))
+        table.add_row(
+            "RSN group management cipher",
+            elements.rsn.group_management_cipher or "Unavailable",
+        )
+    table.add_row(
+        "HT capabilities",
+        "Unavailable"
+        if not elements.available
+        else "Present"
+        if elements.ht_capabilities_present
+        else "Absent",
+    )
+    table.add_row(
+        "VHT capabilities",
+        "Unavailable"
+        if not elements.available
+        else "Present"
+        if elements.vht_capabilities_present
+        else "Absent",
+    )
+    table.add_row(
+        "IE parse status",
+        "Unavailable" if not elements.available else "Malformed" if elements.malformed else "Valid",
     )
     return table
 
@@ -1064,6 +1201,13 @@ def _create_network_context_table(
     )
     table.add_row("Interface", Text(name))
     table.add_row("Index", str(context.interface_index))
+    if context.profile is not None:
+        table.add_row("Network profile", Text(context.profile.name or "Unknown"))
+        table.add_row("Profile interface alias", Text(context.profile.interface_alias or "Unknown"))
+        table.add_row("Network category", context.profile.category or "Unknown")
+        table.add_row("IPv4 connectivity", context.profile.ipv4_connectivity.value)
+        table.add_row("IPv6 connectivity", context.profile.ipv6_connectivity.value)
+        table.add_row("Profile data source", context.profile.provenance)
     _add_ip_rows(table, context)
     _add_dns_rows(table, context)
     _add_dhcp_rows(table, context)
@@ -1095,6 +1239,13 @@ def _add_dns_rows(table: Table, context: InterfaceNetworkContext) -> None:
         table.add_row(f"DNS #{position}", str(server))
     if context.dns.suffix:
         table.add_row("DNS suffix", Text(context.dns.suffix))
+    table.add_row(
+        "DNS address registration", _format_optional_boolean(context.dns.registration_enabled)
+    )
+    table.add_row(
+        "DNS suffix registration",
+        _format_optional_boolean(context.dns.suffix_registration_enabled),
+    )
 
 
 def _add_dhcp_rows(table: Table, context: InterfaceNetworkContext) -> None:
@@ -1102,6 +1253,14 @@ def _add_dhcp_rows(table: Table, context: InterfaceNetworkContext) -> None:
     table.add_row("DHCP IPv6", context.dhcp.ipv6_state.value)
     if context.dhcp.server is not None:
         table.add_row("DHCP server", str(context.dhcp.server))
+    table.add_row(
+        "DHCP lease obtained",
+        context.dhcp.lease_obtained.isoformat() if context.dhcp.lease_obtained else "Unavailable",
+    )
+    table.add_row(
+        "DHCP lease expires",
+        context.dhcp.lease_expires.isoformat() if context.dhcp.lease_expires else "Unavailable",
+    )
 
 
 def _add_default_route_rows(

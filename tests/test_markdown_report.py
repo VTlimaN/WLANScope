@@ -32,6 +32,17 @@ def test_markdown_contains_snapshot_data_and_status() -> None:
     assert "Example Network issue" in report
 
 
+def test_markdown_contains_grouped_deep_inspection_data() -> None:
+    report = render_markdown_report(sample_snapshot())
+
+    assert "received 1000 bytes" in report
+    assert "RSSI: -51 dBm" in report
+    assert "Network category: Private" in report
+    assert "supported rates: 1, 2, 5.5 Mbps" in report
+    assert "RSN: Present" in report
+    assert "router indication reported by neighbor cache" in report
+
+
 def test_markdown_escapes_external_values() -> None:
     external = r"pipe| tick` star* under_ [brackets] slash\ angle<>"
     report = render_markdown_report(sample_snapshot(external_text=external))

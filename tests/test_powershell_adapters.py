@@ -31,6 +31,11 @@ SINGLE_ADAPTER_JSON = """{
 }"""
 
 
+def test_adapter_statistics_collection_is_one_batch_command() -> None:
+    assert ADAPTER_SCRIPT.count("Get-NetAdapterStatistics") == 1
+    assert "ForEach-Object" in ADAPTER_SCRIPT
+
+
 def test_parse_single_adapter_object() -> None:
     enrichment = parse_adapter_enrichments(SINGLE_ADAPTER_JSON)[0]
 
@@ -59,6 +64,64 @@ def test_missing_optional_properties_remain_unavailable() -> None:
     assert enrichment.driver_version is None
     assert enrichment.is_hidden is None
     assert enrichment.administrative_state is AdministrativeState.UNKNOWN
+
+
+def test_parses_adapter_statistics_and_hardware_details() -> None:
+    output = """{
+        "InterfaceGuid":"aaaaaaaa-0000-0000-0000-000000000001",
+        "Statistics":{
+            "ReceivedBytes":100,"SentBytes":200,
+            "ReceivedUnicastPackets":10,"SentUnicastPackets":20,
+            "ReceivedMulticastPackets":3,"SentMulticastPackets":4,
+            "ReceivedBroadcastPackets":5,"SentBroadcastPackets":6,
+            "ReceivedDiscards":1,"OutboundDiscards":2,
+            "ReceivedErrors":7,"OutboundErrors":8
+        },
+        "Hardware":{
+            "ConnectorPresent":true,
+            "DriverDate":"2026-01-02",
+            "DeviceId":"SANITIZED\\\\DEVICE"
+        }
+    }"""
+
+    enrichment = parse_adapter_enrichments(output)[0]
+
+    assert enrichment.statistics is not None
+    assert enrichment.statistics.received_bytes == 100
+    assert enrichment.statistics.outbound_errors == 8
+    assert enrichment.hardware is not None
+    assert enrichment.hardware.connector_present
+    assert enrichment.hardware.device_id == "SANITIZED\\DEVICE"
+
+
+def test_empty_hardware_and_absent_statistics_remain_unavailable() -> None:
+    enrichment = parse_adapter_enrichments(
+        '{"InterfaceGuid":"aaaaaaaa-0000-0000-0000-000000000001",'
+        '"Hardware":{"ConnectorPresent":null,"DriverDate":null,"DeviceId":null}}'
+    )[0]
+
+    assert enrichment.statistics is None
+    assert enrichment.hardware is None
+
+
+def test_missing_statistic_property_is_not_converted_to_zero() -> None:
+    enrichment = parse_adapter_enrichments(
+        '{"InterfaceGuid":"aaaaaaaa-0000-0000-0000-000000000001",'
+        '"Statistics":{"ReceivedBytes":0,"SentBytes":null}}'
+    )[0]
+
+    assert enrichment.statistics is not None
+    assert enrichment.statistics.received_bytes == 0
+    assert enrichment.statistics.sent_bytes is None
+    assert enrichment.statistics.received_errors is None
+
+
+def test_empty_statistics_object_remains_unavailable() -> None:
+    enrichment = parse_adapter_enrichments(
+        '{"InterfaceGuid":"aaaaaaaa-0000-0000-0000-000000000001","Statistics":{}}'
+    )[0]
+
+    assert enrichment.statistics is None
 
 
 @pytest.mark.parametrize("output", ["not-json", "42", "[null]"])

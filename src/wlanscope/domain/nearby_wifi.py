@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 
 from wlanscope.domain.interfaces import normalize_stable_id
@@ -18,6 +19,34 @@ class WifiBand(Enum):
     BAND_5_GHZ = "5 GHz"
     BAND_6_GHZ = "6 GHz"
     OTHER = "Other"
+
+
+@dataclass(frozen=True, slots=True)
+class WifiRsnDetails:
+    version: int
+    group_cipher: str | None
+    pairwise_ciphers: tuple[str, ...]
+    akm_suites: tuple[str, ...]
+    mfp_capable: bool | None
+    mfp_required: bool | None
+    group_management_cipher: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WifiInformationElementSummary:
+    available: bool = False
+    supported_rates_mbps: tuple[float, ...] = ()
+    country_code: str | None = None
+    rsn: WifiRsnDetails | None = None
+    ht_capabilities_present: bool = False
+    ht_operation_present: bool = False
+    vht_capabilities_present: bool = False
+    vht_operation_present: bool = False
+    extended_capabilities_present: bool = False
+    extension_element_ids: tuple[int, ...] = ()
+    vendor_specific_ouis: tuple[str, ...] = ()
+    unknown_element_ids: tuple[int, ...] = ()
+    malformed: bool = False
 
 
 def wifi_band_from_frequency(center_frequency_khz: int) -> WifiBand:
@@ -102,6 +131,13 @@ class WifiAccessPoint:
     capability_information: int | None = None
     timestamp_us: int | None = None
     host_timestamp: int | None = None
+    phy_id: int | None = None
+    bss_type: int | None = None
+    in_reg_domain: bool | None = None
+    supported_rates_mbps: tuple[float, ...] = ()
+    basic_rates_mbps: tuple[float, ...] = ()
+    capability_flags: tuple[str, ...] = ()
+    information_elements: WifiInformationElementSummary = WifiInformationElementSummary()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "interface_id", normalize_stable_id(self.interface_id))
@@ -117,10 +153,33 @@ class WifiAccessPoint:
         ):
             if value is not None and value < 0:
                 raise ValueError(f"{name} cannot be negative")
+        if self.phy_id is not None and self.phy_id < 0:
+            raise ValueError("PHY identifier cannot be negative")
+        if any(rate <= 0 for rate in (*self.supported_rates_mbps, *self.basic_rates_mbps)):
+            raise ValueError("Supported rates must be positive")
 
     @property
     def band(self) -> WifiBand:
         return wifi_band_from_frequency(self.center_frequency_khz)
+
+    @property
+    def beacon_interval_microseconds(self) -> int | None:
+        return self.beacon_period_tu * 1_024 if self.beacon_period_tu is not None else None
+
+    @property
+    def host_observed_at(self) -> datetime | None:
+        if self.host_timestamp is None:
+            return None
+        try:
+            return datetime(1601, 1, 1, tzinfo=UTC) + timedelta(
+                microseconds=self.host_timestamp // 10
+            )
+        except OverflowError:
+            return None
+
+    @property
+    def provenance(self) -> str:
+        return "802.11 Beacon / Probe Response via Native WLAN API"
 
     @property
     def channel(self) -> int | None:
@@ -138,6 +197,9 @@ class AvailableWifiNetwork:
     authentication: WifiAuthentication
     cipher: WifiCipher
     reported_bss_count: int
+    bss_type: int | None = None
+    not_connectable_reason: int | None = None
+    supported_phy_types: tuple[WifiPhyType, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "interface_id", normalize_stable_id(self.interface_id))
@@ -160,6 +222,9 @@ class WifiNetwork:
     cipher: WifiCipher
     reported_bss_count: int
     access_points: tuple[WifiAccessPoint, ...]
+    bss_type: int | None = None
+    not_connectable_reason: int | None = None
+    supported_phy_types: tuple[WifiPhyType, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "interface_id", normalize_stable_id(self.interface_id))

@@ -43,7 +43,7 @@ from wlanscope.domain.network import (
     NetworkCollectionError,
     Route,
 )
-from wlanscope.domain.wifi import WifiCollectionError, WifiInterfaceSnapshot
+from wlanscope.domain.wifi import CurrentWifiSnapshot, WifiCollectionError, WifiInterfaceSnapshot
 from wlanscope.reporting.writer import ReportWriteError
 from wlanscope.version import __version__
 
@@ -139,6 +139,7 @@ class InteractiveSession:
             self._console.print("Current Network", style="bold")
             wifi = None
             network = None
+            network_interfaces: tuple[NetworkInterface, ...] = ()
             try:
                 network_interfaces = self._use_cases.interfaces.execute().interfaces
             except InterfaceCollectionError as error:
@@ -154,30 +155,172 @@ class InteractiveSession:
                 )
             except NetworkCollectionError as error:
                 self._operation_unavailable("Current network", error)
-            if wifi is not None:
-                for interface in wifi.interfaces:
-                    self._console.print(self._renderers.wifi_table(interface))
-                if not wifi.interfaces:
-                    self._console.print("Current Wi-Fi: Unavailable")
-                self._render_messages(tuple(issue.message for issue in wifi.issues))
-            if network is not None:
-                relevant = self._renderers.relevant_network_contexts(network)
-                for context in relevant:
-                    self._console.print(
-                        self._renderers.network_context_table(context, network.default_routes)
-                    )
-                if not relevant:
-                    self._console.print("IP and routing context: Unavailable")
-                self._render_messages(tuple(issue.message for issue in network.issues))
+            self._render_current_overview(wifi, network)
             while True:
-                self._console.print("1. Refresh")
+                self._console.print("1. Overview")
+                self._console.print("2. Wi-Fi Connection")
+                self._console.print("3. IP Addresses")
+                self._console.print("4. Routes")
+                self._console.print("5. DNS / DHCP")
+                self._console.print("6. Adapter")
+                self._console.print("7. Wi-Fi Capabilities / Statistics")
+                self._console.print("R. Refresh")
                 self._console.print("0. Back")
-                choice = self._read("Select an option: ")
+                choice = self._read("Select an option: ").casefold()
                 if choice == "0":
                     return
-                if choice == "1":
+                if choice == "r":
                     break
-                self._invalid_selection()
+                if choice == "1":
+                    self._render_current_overview(wifi, network)
+                elif choice == "2":
+                    self._render_current_wifi_details(wifi, include_connection=True)
+                elif choice == "3":
+                    self._render_current_ip_addresses(network)
+                elif choice == "4":
+                    self._render_current_routes(network)
+                elif choice == "5":
+                    self._render_current_dns_dhcp(network)
+                elif choice == "6":
+                    self._render_current_adapters(network_interfaces)
+                elif choice == "7":
+                    self._render_current_wifi_details(wifi, include_connection=False)
+                else:
+                    self._invalid_selection()
+
+    def _render_current_overview(
+        self,
+        wifi: CurrentWifiSnapshot | None,
+        network: CurrentNetworkSnapshot | None,
+    ) -> None:
+        if wifi is not None:
+            for interface in wifi.interfaces:
+                self._console.print(self._renderers.wifi_table(interface))
+            if not wifi.interfaces:
+                self._console.print("Current Wi-Fi: Unavailable")
+            self._render_messages(tuple(issue.message for issue in wifi.issues))
+        if network is not None:
+            relevant = self._renderers.relevant_network_contexts(network)
+            for context in relevant:
+                self._console.print(
+                    self._renderers.network_context_table(context, network.default_routes)
+                )
+            if not relevant:
+                self._console.print("IP and routing context: Unavailable")
+            self._render_messages(tuple(issue.message for issue in network.issues))
+
+    def _render_current_wifi_details(
+        self, wifi: CurrentWifiSnapshot | None, include_connection: bool
+    ) -> None:
+        title = "Wi-Fi Connection" if include_connection else "Wi-Fi Capabilities / Statistics"
+        self._console.print(title, style="bold")
+        if wifi is None or not wifi.interfaces:
+            self._console.print("Unavailable")
+            return
+        for interface in wifi.interfaces:
+            self._console.print(self._renderers.wifi_table(interface))
+
+    def _render_current_ip_addresses(self, network: CurrentNetworkSnapshot | None) -> None:
+        self._console.print("IP Addresses", style="bold")
+        table = Table(show_header=True, box=None, pad_edge=False)
+        for heading in ("Address", "Network", "Classification", "Origin", "DAD", "Lifetimes"):
+            table.add_column(heading, overflow="fold")
+        assignments = (
+            tuple(item for context in network.interfaces for item in context.addresses)
+            if network is not None
+            else ()
+        )
+        for item in assignments:
+            table.add_row(
+                f"{item.address}/{item.prefix_length}",
+                str(item.network),
+                ", ".join(item.classifications) or "Unknown",
+                f"{item.prefix_origin.display_name} / {item.address_origin.display_name}",
+                item.dad_state.display_name,
+                f"preferred {_optional_counter(item.preferred_lifetime_seconds)}; "
+                f"valid {_optional_counter(item.valid_lifetime_seconds)}; "
+                f"skip-as-source {'Yes' if item.skip_as_source else 'No'}",
+            )
+        self._console.print(table if assignments else "Unavailable")
+
+    def _render_current_routes(self, network: CurrentNetworkSnapshot | None) -> None:
+        self._console.print("Routes", style="bold")
+        table = Table(show_header=True, box=None, pad_edge=False)
+        for heading in ("Destination", "Next hop", "Interface", "Metrics", "Protocol", "Flags"):
+            table.add_column(heading, overflow="fold")
+        routes = network.routes if network is not None else ()
+        for route in routes:
+            table.add_row(
+                str(route.destination),
+                str(route.next_hop),
+                str(route.interface_index),
+                f"route {route.route_metric}; "
+                f"interface {_optional_counter(route.interface_metric)}; "
+                f"effective {_optional_counter(route.effective_metric)}",
+                f"{route.protocol.display_name} / {route.origin.display_name}",
+                ", ".join(
+                    label
+                    for present, label in (
+                        (route.is_default, "Default"),
+                        (route.is_on_link, "On-link"),
+                    )
+                    if present
+                )
+                or "None",
+            )
+        self._console.print(table if routes else "Unavailable")
+
+    def _render_current_dns_dhcp(self, network: CurrentNetworkSnapshot | None) -> None:
+        self._console.print("DNS / DHCP", style="bold")
+        if network is None:
+            self._console.print("Unavailable")
+            return
+        for context in network.interfaces:
+            table = Table(show_header=False, box=None, pad_edge=False)
+            table.add_column("Field", style="bold", no_wrap=True)
+            table.add_column("Value", overflow="fold")
+            table.add_row("Interface", str(context.interface_index))
+            if context.dns is None:
+                table.add_row("DNS", "Unavailable")
+            else:
+                table.add_row(
+                    "DNS servers",
+                    ", ".join(str(server) for server in context.dns.servers) or "None configured",
+                )
+                table.add_row("DNS suffix", Text(context.dns.suffix or "Unavailable"))
+                table.add_row(
+                    "DNS address registration",
+                    _optional_boolean(context.dns.registration_enabled),
+                )
+                table.add_row(
+                    "DNS suffix registration",
+                    _optional_boolean(context.dns.suffix_registration_enabled),
+                )
+            table.add_row("DHCP IPv4", context.dhcp.ipv4_state.value)
+            table.add_row("DHCP IPv6", context.dhcp.ipv6_state.value)
+            table.add_row(
+                "DHCP server", str(context.dhcp.server) if context.dhcp.server else "Unavailable"
+            )
+            table.add_row(
+                "Lease obtained",
+                context.dhcp.lease_obtained.isoformat()
+                if context.dhcp.lease_obtained
+                else "Unavailable",
+            )
+            table.add_row(
+                "Lease expires",
+                context.dhcp.lease_expires.isoformat()
+                if context.dhcp.lease_expires
+                else "Unavailable",
+            )
+            self._console.print(table)
+
+    def _render_current_adapters(self, interfaces: tuple[NetworkInterface, ...]) -> None:
+        self._console.print("Adapter", style="bold")
+        if not interfaces:
+            self._console.print("Unavailable")
+            return
+        self._console.print(self._renderers.interface_table(interfaces, self._console.width))
 
     def _interfaces(self) -> None:
         inventory = None
@@ -239,6 +382,41 @@ class InteractiveSession:
         )
         for label, value in rows:
             table.add_row(label, value)
+        if interface.statistics is not None:
+            statistics = interface.statistics
+            table.add_row("Statistics source", statistics.provenance)
+            table.add_row("Received bytes", _optional_counter(statistics.received_bytes))
+            table.add_row("Sent bytes", _optional_counter(statistics.sent_bytes))
+            table.add_row(
+                "Received unicast packets", _optional_counter(statistics.received_unicast_packets)
+            )
+            table.add_row(
+                "Sent unicast packets", _optional_counter(statistics.sent_unicast_packets)
+            )
+            table.add_row(
+                "Received multicast packets",
+                _optional_counter(statistics.received_multicast_packets),
+            )
+            table.add_row(
+                "Sent multicast packets", _optional_counter(statistics.sent_multicast_packets)
+            )
+            table.add_row(
+                "Received broadcast packets",
+                _optional_counter(statistics.received_broadcast_packets),
+            )
+            table.add_row(
+                "Sent broadcast packets", _optional_counter(statistics.sent_broadcast_packets)
+            )
+            table.add_row("Received discards", _optional_counter(statistics.received_discards))
+            table.add_row("Outbound discards", _optional_counter(statistics.outbound_discards))
+            table.add_row("Received errors", _optional_counter(statistics.received_errors))
+            table.add_row("Outbound errors", _optional_counter(statistics.outbound_errors))
+        if interface.hardware is not None:
+            table.add_row(
+                "Connector present", _optional_boolean(interface.hardware.connector_present)
+            )
+            table.add_row("Driver date", Text(interface.hardware.driver_date or "Unavailable"))
+            table.add_row("Device identifier", Text(interface.hardware.device_id or "Unavailable"))
         self._console.print(table)
         self._wait_for_back()
 
@@ -365,9 +543,22 @@ class InteractiveSession:
         table.add_column("Field", style="bold", no_wrap=True)
         table.add_column("Value", overflow="fold")
         table.add_row("IP", str(discovered.address))
+        table.add_row("Address family", discovered.address_family)
+        table.add_row(
+            "Address classification",
+            ", ".join(discovered.address_classifications) or "Unknown",
+        )
         table.add_row("Interface index", str(discovered.interface_index))
         table.add_row(
             "MAC", str(discovered.mac_address) if discovered.mac_address else "Unavailable"
+        )
+        table.add_row(
+            "Locally administered MAC",
+            _optional_boolean(
+                discovered.mac_address.is_locally_administered
+                if discovered.mac_address is not None
+                else None
+            ),
         )
         table.add_row("Hostname", Text(_hostname_display(host)))
         table.add_row("Hostname state", host.hostname.state.value)
@@ -387,8 +578,28 @@ class InteractiveSession:
             else "Unavailable",
         )
         table.add_row("Discovery sources", sources)
+        table.add_row(
+            "Observation provenance",
+            ", ".join(
+                source.value for source in sorted(discovered.sources, key=lambda item: item.value)
+            ),
+        )
         table.add_row("Self evidence", _yes_no(DiscoverySource.SELF in discovered.sources))
         table.add_row("Gateway evidence", _yes_no(DiscoverySource.GATEWAY in discovered.sources))
+        table.add_row("Neighbor router indication", _yes_no(discovered.is_router))
+        table.add_row(
+            "Role evidence",
+            ", ".join(
+                label
+                for present, label in (
+                    (DiscoverySource.SELF in discovered.sources, "Self"),
+                    (DiscoverySource.GATEWAY in discovered.sources, "Gateway"),
+                    (discovered.is_router, "Neighbor router indication"),
+                )
+                if present
+            )
+            or "None reported",
+        )
         self._console.print("Device Details", style="bold")
         self._console.print(table)
         self._wait_for_back()
@@ -567,3 +778,7 @@ def _hostname_display(host: EnrichedHost) -> str:
 
 def _vendor_display(host: EnrichedHost) -> str:
     return host.vendor.vendor or host.vendor.state.value
+
+
+def _optional_counter(value: int | None) -> str:
+    return str(value) if value is not None else "Unavailable"

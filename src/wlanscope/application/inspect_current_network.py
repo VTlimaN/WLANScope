@@ -20,9 +20,11 @@ from wlanscope.domain.network import (
     InterfaceNetworkContext,
     InterfaceNetworkEnrichment,
     NativeNetworkData,
+    NetworkConnectivity,
     NetworkEnrichmentError,
     NetworkIssue,
     NetworkIssueSource,
+    NetworkProfile,
     Route,
 )
 from wlanscope.domain.wifi import CurrentWifiSnapshot, WifiCollectionError, WifiInterfaceSnapshot
@@ -261,7 +263,35 @@ def _create_context(
     wifi_interface = None
     if network_interface is not None:
         wifi_interface = wifi_by_id.get(network_interface.stable_id.casefold())
-    return InterfaceNetworkContext(index, addresses, dns, dhcp, network_interface, wifi_interface)
+    profile = _create_profile(index, interface_enrichments)
+    return InterfaceNetworkContext(
+        index, addresses, dns, dhcp, network_interface, wifi_interface, profile
+    )
+
+
+def _create_profile(
+    index: int, enrichments: Sequence[InterfaceNetworkEnrichment]
+) -> NetworkProfile | None:
+    candidates = tuple(
+        item
+        for item in enrichments
+        if item.profile_name
+        or item.profile_interface_alias
+        or item.network_category
+        or item.ipv4_connectivity is not NetworkConnectivity.UNKNOWN
+        or item.ipv6_connectivity is not NetworkConnectivity.UNKNOWN
+    )
+    if not candidates:
+        return None
+    item = candidates[0]
+    return NetworkProfile(
+        interface_index=index,
+        name=item.profile_name,
+        interface_alias=item.profile_interface_alias,
+        category=item.network_category,
+        ipv4_connectivity=item.ipv4_connectivity,
+        ipv6_connectivity=item.ipv6_connectivity,
+    )
 
 
 def _create_dns(
@@ -271,7 +301,23 @@ def _create_dns(
         return None
     servers = tuple(dict.fromkeys(server for item in enrichments for server in item.dns_servers))
     suffix = next((item.dns_suffix for item in enrichments if item.dns_suffix), None)
-    return DnsConfiguration(index, servers, suffix)
+    registration = next(
+        (
+            item.dns_registration_enabled
+            for item in enrichments
+            if item.dns_registration_enabled is not None
+        ),
+        None,
+    )
+    suffix_registration = next(
+        (
+            item.dns_suffix_registration_enabled
+            for item in enrichments
+            if item.dns_suffix_registration_enabled is not None
+        ),
+        None,
+    )
+    return DnsConfiguration(index, servers, suffix, registration, suffix_registration)
 
 
 def _create_dhcp(
@@ -288,6 +334,8 @@ def _create_dhcp(
         ipv4_state=ipv4_state,
         ipv6_state=states.get(6, DhcpState.UNKNOWN),
         server=dhcp_enrichment.server if dhcp_enrichment else None,
+        lease_obtained=dhcp_enrichment.lease_obtained if dhcp_enrichment else None,
+        lease_expires=dhcp_enrichment.lease_expires if dhcp_enrichment else None,
     )
 
 

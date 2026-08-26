@@ -1,6 +1,9 @@
 import ctypes
 
+import pytest
+
 from wlanscope.domain.nearby_wifi import WifiScanIssueCode
+from wlanscope.domain.wifi import NativeWifiDataError
 from wlanscope.platform.windows.native_wifi import (
     _guid_from_text,
     _WlanInterfaceInfo,
@@ -8,7 +11,9 @@ from wlanscope.platform.windows.native_wifi import (
 )
 from wlanscope.platform.windows.native_wifi_scan import (
     NativeNearbyWifiCollector,
+    _convert_access_point,
     _NotificationCallback,
+    _read_access_points,
     _WlanAvailableNetwork,
     _WlanAvailableNetworkList,
     _WlanBssEntry,
@@ -29,6 +34,106 @@ def test_scan_struct_layouts_match_windows_abi() -> None:
     assert _WlanBssEntry.beacon_period.offset == 66
     assert _WlanBssEntry.timestamp_us.offset == 72
     assert _WlanBssList.items.offset == 8
+
+
+def test_bss_conversion_preserves_fixed_fields_rates_and_information_elements() -> None:
+    item = _bss(b"SANITIZED", 11, 5_180_000)
+    item.phy_id = 3
+    item.bss_type = 1
+    item.in_reg_domain = 1
+    item.capability_information = 0x0431
+    item.rate_set.rate_set_length = 4
+    item.rate_set.rate_set[0] = 0x8002
+    item.rate_set.rate_set[1] = 0x0004
+    rsn = bytes.fromhex("0100 000fac04 0100 000fac04 0100 000fac02 c000")
+    blob = bytes((7, 3)) + b"US " + bytes((48, len(rsn))) + rsn
+    item.information_element_offset = ctypes.sizeof(_WlanBssEntry)
+    item.information_element_size = len(blob)
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(item) + len(blob))
+    address = ctypes.addressof(buffer)
+    ctypes.memmove(address, ctypes.byref(item), ctypes.sizeof(item))
+    ctypes.memmove(address + ctypes.sizeof(item), blob, len(blob))
+
+    access_point = _convert_access_point(
+        _WlanBssEntry.from_address(address), _FIRST_ID, address, address + len(buffer)
+    )
+
+    assert access_point.phy_id == 3
+    assert access_point.bss_type == 1
+    assert access_point.in_reg_domain
+    assert access_point.supported_rates_mbps == (1.0, 2.0)
+    assert access_point.basic_rates_mbps == (1.0,)
+    assert access_point.capability_flags == (
+        "ESS",
+        "Privacy",
+        "Short preamble",
+        "Short slot time",
+    )
+    assert access_point.information_elements.country_code == "US"
+    assert access_point.information_elements.rsn is not None
+
+
+@pytest.mark.parametrize(
+    ("offset", "size"),
+    [(1, 4), (ctypes.sizeof(_WlanBssEntry), 2325), (ctypes.sizeof(_WlanBssEntry), 4)],
+)
+def test_bss_information_element_bounds_are_validated(offset: int, size: int) -> None:
+    item = _bss(b"SANITIZED", 11, 5_180_000)
+    item.information_element_offset = offset
+    item.information_element_size = size
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(item) + 2)
+    address = ctypes.addressof(buffer)
+    ctypes.memmove(address, ctypes.byref(item), ctypes.sizeof(item))
+
+    with pytest.raises(NativeWifiDataError):
+        _convert_access_point(
+            _WlanBssEntry.from_address(address), _FIRST_ID, address, address + len(buffer)
+        )
+
+
+def test_multiple_bss_information_elements_are_read_after_fixed_entry_array() -> None:
+    first = _bss(b"ONE", 11, 2_437_000)
+    second = _bss(b"TWO", 12, 5_180_000)
+    first_blob = bytes((7, 3)) + b"US "
+    second_blob = bytes((7, 3)) + b"BR "
+    fixed_size = _WlanBssList.items.offset + 2 * ctypes.sizeof(_WlanBssEntry)
+    total_size = fixed_size + len(first_blob) + len(second_blob)
+    buffer = ctypes.create_string_buffer(total_size)
+    address = ctypes.addressof(buffer)
+    header = _WlanBssList.from_address(address)
+    header.total_size = total_size
+    header.number_of_items = 2
+    first_address = address + _WlanBssList.items.offset
+    second_address = first_address + ctypes.sizeof(_WlanBssEntry)
+    first.information_element_offset = address + fixed_size - first_address
+    first.information_element_size = len(first_blob)
+    second.information_element_offset = address + fixed_size + len(first_blob) - second_address
+    second.information_element_size = len(second_blob)
+    ctypes.memmove(first_address, ctypes.byref(first), ctypes.sizeof(first))
+    ctypes.memmove(second_address, ctypes.byref(second), ctypes.sizeof(second))
+    ctypes.memmove(address + fixed_size, first_blob, len(first_blob))
+    ctypes.memmove(address + fixed_size + len(first_blob), second_blob, len(second_blob))
+
+    access_points = _read_access_points(address, _FIRST_ID)
+
+    assert [item.information_elements.country_code for item in access_points] == ["US", "BR"]
+
+
+def test_bss_information_element_cannot_overlap_fixed_entry_array() -> None:
+    first = _bss(b"ONE", 11, 2_437_000)
+    second = _bss(b"TWO", 12, 5_180_000)
+    size = _WlanBssList.items.offset + 2 * ctypes.sizeof(_WlanBssEntry)
+    buffer = ctypes.create_string_buffer(size)
+    address = ctypes.addressof(buffer)
+    header = _WlanBssList.from_address(address)
+    header.total_size = size
+    header.number_of_items = 2
+    first.information_element_offset = ctypes.sizeof(_WlanBssEntry)
+    first.information_element_size = 2
+    _write_items(address, _WlanBssList.items.offset, (first, second))
+
+    with pytest.raises(NativeWifiDataError):
+        _read_access_points(address, _FIRST_ID)
 
 
 def test_scan_registers_notification_waits_and_cleans_up() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from ipaddress import IPv4Address, ip_address
 
 from wlanscope.domain.network import (
@@ -8,6 +9,7 @@ from wlanscope.domain.network import (
     DhcpState,
     InterfaceNetworkEnrichment,
     IpAddress,
+    NetworkConnectivity,
     NetworkEnrichmentError,
 )
 from wlanscope.platform.windows.powershell import PowerShellDataError, PowerShellRunner
@@ -18,8 +20,13 @@ NETWORK_ENRICHMENT_SCRIPT = "\n".join(
         "$OutputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false",
         "$dnsClients = @(Get-DnsClient -ErrorAction Stop)",
         "$dnsServers = @(Get-DnsClientServerAddress -ErrorAction Stop)",
+        "$profiles = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue)",
         "$items = @(Get-NetIPInterface -ErrorAction Stop | ForEach-Object {",
         "    $interface = $_",
+        (
+            "    $profile = @($profiles | Where-Object { "
+            "$_.InterfaceIndex -eq $interface.InterfaceIndex })[0]"
+        ),
         (
             "    $client = @($dnsClients | Where-Object { "
             "$_.InterfaceIndex -eq $interface.InterfaceIndex })[0]"
@@ -40,7 +47,37 @@ NETWORK_ENRICHMENT_SCRIPT = "\n".join(
             "        DnsSuffix = if ($null -eq $client.ConnectionSpecificSuffix) "
             "{ $null } else { [string]$client.ConnectionSpecificSuffix }"
         ),
+        (
+            "        DnsRegistrationEnabled = if "
+            "($null -eq $client.RegisterThisConnectionsAddress) "
+            "{ $null } else { [bool]$client.RegisterThisConnectionsAddress }"
+        ),
+        (
+            "        DnsSuffixRegistrationEnabled = if "
+            "($null -eq $client.UseSuffixWhenRegistering) "
+            "{ $null } else { [bool]$client.UseSuffixWhenRegistering }"
+        ),
         "        DnsServers = @($servers | ForEach-Object { @($_.ServerAddresses) })",
+        (
+            "        ProfileName = if ($null -eq $profile.Name) "
+            "{ $null } else { [string]$profile.Name }"
+        ),
+        (
+            "        ProfileInterfaceAlias = if ($null -eq $profile.InterfaceAlias) "
+            "{ $null } else { [string]$profile.InterfaceAlias }"
+        ),
+        (
+            "        NetworkCategory = if ($null -eq $profile.NetworkCategory) "
+            "{ $null } else { [string]$profile.NetworkCategory }"
+        ),
+        (
+            "        IPv4Connectivity = if ($null -eq $profile.IPv4Connectivity) "
+            "{ $null } else { [string]$profile.IPv4Connectivity }"
+        ),
+        (
+            "        IPv6Connectivity = if ($null -eq $profile.IPv6Connectivity) "
+            "{ $null } else { [string]$profile.IPv6Connectivity }"
+        ),
         "    }",
         "})",
         "ConvertTo-Json -InputObject $items -Depth 4 -Compress",
@@ -61,6 +98,14 @@ DHCP_ENRICHMENT_SCRIPT = "\n".join(
         (
             "        DhcpServer = if ($null -eq $_.DHCPServer) "
             "{ $null } else { [string]$_.DHCPServer }"
+        ),
+        (
+            "        LeaseObtained = if ($null -eq $_.DHCPLeaseObtained) "
+            "{ $null } else { $_.DHCPLeaseObtained.ToUniversalTime().ToString('o') }"
+        ),
+        (
+            "        LeaseExpires = if ($null -eq $_.DHCPLeaseExpires) "
+            "{ $null } else { $_.DHCPLeaseExpires.ToUniversalTime().ToString('o') }"
         ),
         "    }",
         "})",
@@ -109,6 +154,19 @@ def _parse_network_record(value: object) -> InterfaceNetworkEnrichment:
         dhcp_state=_dhcp_state(record.get("Dhcp")),
         dns_servers=_dns_servers(record.get("DnsServers"), family),
         dns_suffix=_optional_string(record.get("DnsSuffix"), "DnsSuffix"),
+        dns_registration_enabled=_optional_boolean(
+            record.get("DnsRegistrationEnabled"), "DnsRegistrationEnabled"
+        ),
+        dns_suffix_registration_enabled=_optional_boolean(
+            record.get("DnsSuffixRegistrationEnabled"), "DnsSuffixRegistrationEnabled"
+        ),
+        profile_name=_optional_string(record.get("ProfileName"), "ProfileName"),
+        profile_interface_alias=_optional_string(
+            record.get("ProfileInterfaceAlias"), "ProfileInterfaceAlias"
+        ),
+        network_category=_optional_string(record.get("NetworkCategory"), "NetworkCategory"),
+        ipv4_connectivity=_connectivity(record.get("IPv4Connectivity")),
+        ipv6_connectivity=_connectivity(record.get("IPv6Connectivity")),
     )
 
 
@@ -127,10 +185,16 @@ def _parse_dhcp_record(value: object) -> DhcpEnrichment:
         if not isinstance(parsed, IPv4Address):
             raise NetworkEnrichmentError("DHCP server must be an IPv4 address")
         server = parsed
+    lease_obtained = _optional_datetime(record.get("LeaseObtained"), "LeaseObtained")
+    lease_expires = _optional_datetime(record.get("LeaseExpires"), "LeaseExpires")
+    if lease_obtained is not None and lease_expires is not None and lease_expires < lease_obtained:
+        raise NetworkEnrichmentError("DHCP lease expiration precedes its obtained timestamp")
     return DhcpEnrichment(
         interface_index=_required_integer(record.get("InterfaceIndex"), "InterfaceIndex"),
         enabled=enabled,
         server=server,
+        lease_obtained=lease_obtained,
+        lease_expires=lease_expires,
     )
 
 
@@ -189,6 +253,44 @@ def _dhcp_state(value: object) -> DhcpState:
         raise NetworkEnrichmentError("PowerShell DHCP state has an invalid type")
     states = {"enabled": DhcpState.ENABLED, "disabled": DhcpState.DISABLED}
     return states.get(value.casefold(), DhcpState.UNKNOWN)
+
+
+def _connectivity(value: object) -> NetworkConnectivity:
+    state = _optional_string(value, "Connectivity")
+    if state is None:
+        return NetworkConnectivity.UNKNOWN
+    normalized = state.replace("_", "").replace(" ", "").casefold()
+    states = {
+        "disconnected": NetworkConnectivity.DISCONNECTED,
+        "notraffic": NetworkConnectivity.NO_TRAFFIC,
+        "subnet": NetworkConnectivity.SUBNET,
+        "localnetwork": NetworkConnectivity.LOCAL_NETWORK,
+        "internet": NetworkConnectivity.INTERNET,
+    }
+    return states.get(normalized, NetworkConnectivity.UNKNOWN)
+
+
+def _optional_datetime(value: object, name: str) -> datetime | None:
+    text = _optional_string(value, name)
+    if text is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise NetworkEnrichmentError(f"PowerShell {name} has an invalid timestamp") from error
+    if parsed.tzinfo is None:
+        raise NetworkEnrichmentError(f"PowerShell {name} timestamp must be timezone-aware")
+    if parsed.year <= 1601:
+        return None
+    return parsed
+
+
+def _optional_boolean(value: object, name: str) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise NetworkEnrichmentError(f"PowerShell {name} has an invalid type")
+    return value
 
 
 def _optional_string(value: object, name: str) -> str | None:

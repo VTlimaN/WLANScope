@@ -252,7 +252,7 @@ def test_current_network_refresh_is_explicit() -> None:
     network = ReturningUseCase(CurrentNetworkSnapshot((), ()))
 
     exit_code, output, _, _ = run_session(
-        ["1", "invalid", "1", "0", "0"],
+        ["1", "invalid", "r", "0", "0"],
         use_cases(
             interfaces=interfaces,
             current_wifi=wifi,
@@ -284,8 +284,56 @@ def test_current_network_unavailable_returns_to_session() -> None:
     assert "Author: sasser" in output
 
 
+def test_current_network_renders_wifi_and_profile_deep_data() -> None:
+    snapshot = sample_snapshot()
+    assert snapshot.interfaces is not None
+    assert snapshot.current_wifi is not None
+    assert snapshot.current_network is not None
+
+    exit_code, output, _, _ = run_session(
+        ["1", "0", "0"],
+        use_cases(
+            interfaces=ReturningUseCase(snapshot.interfaces),
+            current_wifi=ReturningUseCase(snapshot.current_wifi),
+            current_network=ReturningUseCase(snapshot.current_network),
+        ),
+    )
+
+    assert exit_code == 0
+    assert "RSSI" in output
+    assert "Supported PHYs" in output
+    assert "Network category" in output
+    assert "IPv4 connectivity" in output
+
+
+def test_current_network_deep_navigation_reuses_one_collection() -> None:
+    snapshot = sample_snapshot()
+    assert snapshot.interfaces is not None
+    assert snapshot.current_wifi is not None
+    assert snapshot.current_network is not None
+    interfaces = ReturningUseCase(snapshot.interfaces)
+    wifi = ReturningUseCase(snapshot.current_wifi)
+    network = ReturningUseCase(snapshot.current_network)
+
+    exit_code, output, _, _ = run_session(
+        ["1", "3", "4", "5", "6", "7", "0", "0"],
+        use_cases(interfaces=interfaces, current_wifi=wifi, current_network=network),
+    )
+
+    assert exit_code == 0
+    assert interfaces.calls == 1
+    assert wifi.calls == 1
+    assert network.calls == 1
+    assert "IP Addresses" in output
+    assert "Routes" in output
+    assert "DNS / DHCP" in output
+    assert "Wi-Fi Capabilities / Statistics" in output
+
+
 def test_interface_detail_and_refresh_reuse_snapshot_until_requested() -> None:
-    interfaces = ReturningUseCase(InterfaceInventory((_interface(),)))
+    snapshot = sample_snapshot()
+    assert snapshot.interfaces is not None
+    interfaces = ReturningUseCase(snapshot.interfaces)
 
     exit_code, output, _, _ = run_session(
         ["2", "1", "0", "r", "0", "0"], use_cases(interfaces=interfaces)
@@ -295,6 +343,8 @@ def test_interface_detail_and_refresh_reuse_snapshot_until_requested() -> None:
     assert interfaces.calls == 2
     assert "Interface Details" in output
     assert "Driver version" in output
+    assert "Received bytes" in output
+    assert "Connector present" in output
 
 
 def test_interface_invalid_selection_does_not_refresh_or_interpret_markup() -> None:
@@ -317,7 +367,9 @@ def test_interface_invalid_selection_does_not_refresh_or_interpret_markup() -> N
 
 
 def test_nearby_details_and_ap_reuse_snapshot_then_refresh_once() -> None:
-    nearby = ReturningUseCase(nearby_snapshot())
+    snapshot = sample_snapshot()
+    assert snapshot.nearby_wifi is not None
+    nearby = ReturningUseCase(snapshot.nearby_wifi)
 
     exit_code, output, _, _ = run_session(
         ["3", "1", "1", "0", "0", "r", "0", "0"],
@@ -328,6 +380,26 @@ def test_nearby_details_and_ap_reuse_snapshot_then_refresh_once() -> None:
     assert nearby.calls == 2
     assert "Network Details" in output
     assert "Access Point Details" in output
+    assert "Supported rates" in output
+    assert "RSN group cipher" in output
+
+
+def test_device_detail_renders_classification_and_provenance() -> None:
+    snapshot = sample_snapshot()
+    assert snapshot.devices is not None
+
+    exit_code, output, _, _ = run_session(
+        ["4", "1", "0", "0", "0"],
+        use_cases(
+            devices=ReturningUseCase(snapshot.devices.discovered),
+            enrichment=ReturningUseCase(snapshot.devices),
+        ),
+    )
+
+    assert exit_code == 0
+    assert "Address classification" in output
+    assert "Locally administered MAC" in output
+    assert "Observation provenance" in output
 
 
 def test_hidden_and_duplicate_ssids_are_selected_by_snapshot_index() -> None:

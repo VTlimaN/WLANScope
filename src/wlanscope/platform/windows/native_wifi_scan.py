@@ -35,6 +35,12 @@ from wlanscope.platform.windows.native_wifi import (
     _Guid,
     _guid_to_text,
 )
+from wlanscope.platform.windows.wifi_ie import (
+    MAX_INFORMATION_ELEMENT_BLOB_SIZE,
+    capability_flags,
+    decode_rate_set,
+    parse_information_elements,
+)
 
 _ERROR_SUCCESS = 0
 _ERROR_ACCESS_DENIED = 5
@@ -370,6 +376,14 @@ def _convert_available_network(
             authentication=WifiAuthentication(int(item.authentication)),
             cipher=WifiCipher(int(item.cipher)),
             reported_bss_count=int(item.number_of_bssids),
+            bss_type=int(item.bss_type),
+            not_connectable_reason=(
+                int(item.not_connectable_reason) if not bool(item.network_connectable) else None
+            ),
+            supported_phy_types=tuple(
+                WifiPhyType(int(item.phy_types[index]))
+                for index in range(min(int(item.number_of_phy_types), _WLAN_MAX_PHY_TYPE_NUMBER))
+            ),
         )
     except ValueError as error:
         raise NativeWifiDataError(
@@ -387,16 +401,38 @@ def _read_access_points(address: int, interface_id: str) -> tuple[WifiAccessPoin
     if total_size < required_size:
         raise NativeWifiDataError("Windows returned a truncated BSS list")
     item_address = address + _WlanBssList.items.offset
-    return tuple(
-        _convert_access_point(
-            _WlanBssEntry.from_address(item_address + index * ctypes.sizeof(_WlanBssEntry)),
-            interface_id,
+    list_end = address + total_size
+    variable_data_start = address + required_size
+    access_points: list[WifiAccessPoint] = []
+    for index in range(count):
+        entry_address = item_address + index * ctypes.sizeof(_WlanBssEntry)
+        access_points.append(
+            _convert_access_point(
+                _WlanBssEntry.from_address(entry_address),
+                interface_id,
+                entry_address,
+                list_end,
+                variable_data_start,
+            )
         )
-        for index in range(count)
+    return tuple(access_points)
+
+
+def _convert_access_point(
+    item: _WlanBssEntry,
+    interface_id: str,
+    entry_address: int | None = None,
+    list_end: int | None = None,
+    variable_data_start: int | None = None,
+) -> WifiAccessPoint:
+    rate_length = int(item.rate_set.rate_set_length)
+    if rate_length > ctypes.sizeof(item.rate_set.rate_set) or rate_length % 2:
+        raise NativeWifiDataError("Windows returned an invalid BSS rate set length")
+    raw_rates = tuple(int(item.rate_set.rate_set[index]) for index in range(rate_length // 2))
+    supported_rates, basic_rates = decode_rate_set(raw_rates)
+    information_elements = parse_information_elements(
+        _read_information_elements(item, entry_address, list_end, variable_data_start)
     )
-
-
-def _convert_access_point(item: _WlanBssEntry, interface_id: str) -> WifiAccessPoint:
     try:
         return WifiAccessPoint(
             interface_id=interface_id,
@@ -410,9 +446,44 @@ def _convert_access_point(item: _WlanBssEntry, interface_id: str) -> WifiAccessP
             capability_information=int(item.capability_information),
             timestamp_us=int(item.timestamp_us),
             host_timestamp=int(item.host_timestamp),
+            phy_id=int(item.phy_id),
+            bss_type=int(item.bss_type),
+            in_reg_domain=bool(item.in_reg_domain),
+            supported_rates_mbps=supported_rates,
+            basic_rates_mbps=basic_rates,
+            capability_flags=capability_flags(int(item.capability_information)),
+            information_elements=information_elements,
         )
     except ValueError as error:
         raise NativeWifiDataError(f"Windows returned invalid BSS data: {error}") from error
+
+
+def _read_information_elements(
+    item: _WlanBssEntry,
+    entry_address: int | None,
+    list_end: int | None,
+    variable_data_start: int | None,
+) -> bytes:
+    size = int(item.information_element_size)
+    offset = int(item.information_element_offset)
+    if size == 0:
+        return b""
+    if size > MAX_INFORMATION_ELEMENT_BLOB_SIZE:
+        raise NativeWifiDataError("Windows returned an oversized information element blob")
+    if entry_address is None or list_end is None:
+        return b""
+    if variable_data_start is None:
+        variable_data_start = entry_address + ctypes.sizeof(_WlanBssEntry)
+    start = entry_address + offset
+    end = start + size
+    if (
+        offset < ctypes.sizeof(_WlanBssEntry)
+        or start < variable_data_start
+        or end < start
+        or end > list_end
+    ):
+        raise NativeWifiDataError("Windows returned invalid information element bounds")
+    return ctypes.string_at(start, size)
 
 
 def _convert_ssid(value: _Dot11Ssid) -> WifiSsid:

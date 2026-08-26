@@ -133,4 +133,6 @@ def _merge_interface(
         transmit_link_speed_bps=(
             interface.transmit_link_speed_bps or enrichment.transmit_link_speed_bps
         ),
+        statistics=enrichment.statistics,
+        hardware=enrichment.hardware,
     )

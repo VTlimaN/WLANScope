@@ -6,7 +6,7 @@ WLANScope is a Windows-focused cybersecurity and network visibility project crea
 
 ## Project status
 
-WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces, inspects the current wireless connection, analyzes current IPv4/IPv6, routing, DNS, and DHCP context, discovers and details nearby Wi-Fi networks, performs bounded discovery and enrichment of hosts observable on the routed local subnet, composes those results into a full network scan, and exports explicit local JSON and Markdown reports.
+WLANScope has completed its project foundation and is implementing Windows network visibility incrementally. The current implementation inventories Windows network interfaces and cumulative adapter counters, deeply inspects the current wireless connection and network profile, analyzes IPv4/IPv6, routing, DNS, and DHCP context, safely decodes high-value beacon information from nearby Wi-Fi observations, performs bounded discovery and enrichment of hosts observable on the routed local subnet, composes those results into a full network scan, and exports explicit local JSON and Markdown reports.
 
 ## Requirements
 
@@ -84,6 +84,10 @@ Reports can contain IP and MAC addresses, SSIDs, BSSIDs, gateways, DNS topology,
 
 The Wi-Fi commands do not retrieve profile XML, collect credentials, connect to networks, or modify wireless state.
 
+Deep inspection remains local and evidence-based. Current Wi-Fi details can include adapter capabilities, channel, actual RSSI, radio state, operation mode, and cumulative WLAN statistics when Windows and the driver expose them. Interface details can include cumulative traffic/error counters and optional hardware metadata. Nearby access-point details can include beacon timing, supported rates, documented capability flags, and a bounded interpretation of selected 802.11 information elements, including RSN security metadata.
+
+Nearby Wi-Fi is observational. An SSID or BSSID observed without association does not reveal that network's IP configuration, gateway, DNS, DHCP, public IP, ISP, or last-mile technology. WLANScope performs no external public-IP or ISP lookup and never fills those fields through guesses.
+
 Device discovery reports observed hosts, not an authoritative list of clients connected to a router. Firewalls, client isolation, sleeping devices, and stale or incomplete neighbor state can limit visibility. IPv6 neighbor entries can be observed, but WLANScope does not sweep IPv6 address space.
 
 PTR names and vendor names are optional enrichment and may be unavailable. Vendor lookup performs no online request during discovery. WLANScope can read an IEEE public MA-L CSV export from `%LOCALAPPDATA%\WLANScope\data\oui.csv` when the file contains the `Registry`, `Assignment`, and `Organization Name` columns. No OUI registry is bundled because WLANScope does not assert redistribution rights for the upstream dataset. This milestone supports 24-bit MA-L assignments only.
@@ -122,7 +126,7 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M9: JSON and Markdown reporting, implemented
 - M10: CLI polish and reliability, implemented
 - M10.5: interactive terminal experience, implemented
-- M10.6: data completeness and deep inspection
+- M10.6: data completeness and deep inspection, in development
 - M10.7: CLI visual design and final UX
 - M11: documentation and portfolio preparation
 - M12: v1.0.0 release

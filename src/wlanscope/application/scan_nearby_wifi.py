@@ -126,6 +126,9 @@ def _network_from_available(
         cipher=network.cipher,
         reported_bss_count=network.reported_bss_count,
         access_points=_sort_access_points(matching),
+        bss_type=network.bss_type,
+        not_connectable_reason=network.not_connectable_reason,
+        supported_phy_types=network.supported_phy_types,
     )
 
 
@@ -160,6 +163,10 @@ def _network_from_access_points(
         cipher=WifiCipher(0),
         reported_bss_count=len(access_points),
         access_points=_sort_access_points(access_points),
+        bss_type=strongest.bss_type,
+        supported_phy_types=tuple(
+            dict.fromkeys(access_point.phy_type for access_point in access_points)
+        ),
     )
 
 

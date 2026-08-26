@@ -38,6 +38,71 @@ class MediaState(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class AdapterStatistics:
+    received_bytes: int | None
+    sent_bytes: int | None
+    received_unicast_packets: int | None
+    sent_unicast_packets: int | None
+    received_multicast_packets: int | None
+    sent_multicast_packets: int | None
+    received_broadcast_packets: int | None
+    sent_broadcast_packets: int | None
+    received_discards: int | None
+    outbound_discards: int | None
+    received_errors: int | None
+    outbound_errors: int | None
+
+    def __post_init__(self) -> None:
+        values = (
+            self.received_bytes,
+            self.sent_bytes,
+            self.received_unicast_packets,
+            self.sent_unicast_packets,
+            self.received_multicast_packets,
+            self.sent_multicast_packets,
+            self.received_broadcast_packets,
+            self.sent_broadcast_packets,
+            self.received_discards,
+            self.outbound_discards,
+            self.received_errors,
+            self.outbound_errors,
+        )
+        if any(value is not None and value < 0 for value in values):
+            raise ValueError("Adapter statistics cannot be negative")
+
+    @property
+    def has_values(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.received_bytes,
+                self.sent_bytes,
+                self.received_unicast_packets,
+                self.sent_unicast_packets,
+                self.received_multicast_packets,
+                self.sent_multicast_packets,
+                self.received_broadcast_packets,
+                self.sent_broadcast_packets,
+                self.received_discards,
+                self.outbound_discards,
+                self.received_errors,
+                self.outbound_errors,
+            )
+        )
+
+    @property
+    def provenance(self) -> str:
+        return "Get-NetAdapterStatistics"
+
+
+@dataclass(frozen=True, slots=True)
+class AdapterHardwareDetails:
+    connector_present: bool | None = None
+    driver_date: str | None = None
+    device_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MacAddress:
     octets: bytes
 
@@ -60,6 +125,14 @@ class MacAddress:
 
     def __str__(self) -> str:
         return ":".join(f"{octet:02X}" for octet in self.octets)
+
+    @property
+    def is_locally_administered(self) -> bool:
+        return bool(self.octets[0] & 0x02)
+
+    @property
+    def is_multicast(self) -> bool:
+        return bool(self.octets[0] & 0x01)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +157,8 @@ class NetworkInterface:
     manufacturer: str | None = None
     driver_description: str | None = None
     driver_version: str | None = None
+    statistics: AdapterStatistics | None = None
+    hardware: AdapterHardwareDetails | None = None
 
     def __post_init__(self) -> None:
         if self.interface_index < 0:
@@ -118,6 +193,8 @@ class AdapterEnrichment:
     media_state: MediaState = MediaState.UNKNOWN
     receive_link_speed_bps: int | None = None
     transmit_link_speed_bps: int | None = None
+    statistics: AdapterStatistics | None = None
+    hardware: AdapterHardwareDetails | None = None
 
     def __post_init__(self) -> None:
         if self.stable_id is None and self.interface_index is None:

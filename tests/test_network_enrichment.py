@@ -3,8 +3,9 @@ from collections.abc import Sequence
 
 import pytest
 
-from wlanscope.domain.network import DhcpState, NetworkEnrichmentError
+from wlanscope.domain.network import DhcpState, NetworkConnectivity, NetworkEnrichmentError
 from wlanscope.platform.windows.network_enrichment import (
+    NETWORK_ENRICHMENT_SCRIPT,
     CimDhcpCollector,
     PowerShellNetworkCollector,
     parse_dhcp_enrichments,
@@ -16,6 +17,10 @@ from wlanscope.platform.windows.powershell import (
     PowerShellTimeoutError,
     ProcessResult,
 )
+
+
+def test_network_profiles_are_collected_once_in_batch() -> None:
+    assert NETWORK_ENRICHMENT_SCRIPT.count("Get-NetConnectionProfile") == 1
 
 
 def test_parses_network_enrichment_array() -> None:
@@ -53,6 +58,25 @@ def test_parses_single_network_object_and_missing_properties() -> None:
     assert records[0].dns_servers == ()
 
 
+def test_parses_network_profile_and_connectivity() -> None:
+    records = parse_network_enrichments(
+        '{"InterfaceIndex":7,"AddressFamily":"IPv4","InterfaceMetric":25,'
+        '"Dhcp":"Enabled","DnsServers":[],"ProfileName":"example.invalid",'
+        '"ProfileInterfaceAlias":"Sanitized adapter",'
+        '"NetworkCategory":"Private","IPv4Connectivity":"Internet",'
+        '"IPv6Connectivity":"NoTraffic","DnsRegistrationEnabled":true,'
+        '"DnsSuffixRegistrationEnabled":false}'
+    )
+
+    assert records[0].profile_name == "example.invalid"
+    assert records[0].profile_interface_alias == "Sanitized adapter"
+    assert records[0].network_category == "Private"
+    assert records[0].ipv4_connectivity is NetworkConnectivity.INTERNET
+    assert records[0].ipv6_connectivity is NetworkConnectivity.NO_TRAFFIC
+    assert records[0].dns_registration_enabled is True
+    assert records[0].dns_suffix_registration_enabled is False
+
+
 def test_empty_network_output_returns_empty_collection() -> None:
     assert parse_network_enrichments("  ") == ()
 
@@ -85,6 +109,38 @@ def test_parses_dhcp_enabled_server_and_disabled_state() -> None:
     assert str(records[0].server) == "192.0.2.1"
     assert not records[1].enabled
     assert records[1].server is None
+
+
+def test_parses_timezone_aware_dhcp_lease_timestamps() -> None:
+    record = parse_dhcp_enrichments(
+        '[{"InterfaceIndex":7,"DhcpEnabled":true,"DhcpServer":"192.0.2.1",'
+        '"LeaseObtained":"2026-01-02T03:04:05+00:00",'
+        '"LeaseExpires":"2026-01-03T03:04:05Z"}]'
+    )[0]
+
+    assert record.lease_obtained is not None
+    offset = record.lease_obtained.utcoffset()
+    assert offset is not None
+    assert offset.total_seconds() == 0
+    assert record.lease_expires is not None
+
+
+def test_dhcp_lease_sentinel_remains_unavailable() -> None:
+    record = parse_dhcp_enrichments(
+        '[{"InterfaceIndex":7,"DhcpEnabled":true,"DhcpServer":null,'
+        '"LeaseObtained":"1601-01-01T00:00:00+00:00","LeaseExpires":null}]'
+    )[0]
+
+    assert record.lease_obtained is None
+
+
+def test_dhcp_lease_expiration_before_obtained_is_rejected() -> None:
+    with pytest.raises(NetworkEnrichmentError):
+        parse_dhcp_enrichments(
+            '[{"InterfaceIndex":7,"DhcpEnabled":true,"DhcpServer":null,'
+            '"LeaseObtained":"2026-01-03T00:00:00+00:00",'
+            '"LeaseExpires":"2026-01-02T00:00:00+00:00"}]'
+        )
 
 
 @pytest.mark.parametrize(

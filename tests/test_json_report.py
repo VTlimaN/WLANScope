@@ -128,6 +128,47 @@ def test_json_uses_stable_enum_contracts() -> None:
     )
 
 
+def test_json_exports_deep_inspection_fields_without_raw_native_data() -> None:
+    report = parse_report()
+
+    assert at(report, "data", "interfaces", "items", 0, "statistics", "received_bytes") == 1000
+    assert at(report, "data", "interfaces", "items", 0, "hardware", "connector_present")
+    assert at(report, "data", "current_wifi", "interfaces", 0, "channel_number") == 36
+    assert at(report, "data", "current_wifi", "interfaces", 0, "rssi_dbm") == -51
+    assert (
+        at(report, "data", "current_wifi", "interfaces", 0, "connection", "bss_type")
+        == "infrastructure"
+    )
+    assert (
+        at(
+            report,
+            "data",
+            "current_wifi",
+            "interfaces",
+            0,
+            "capabilities",
+            "infrastructure_security",
+            "state",
+        )
+        == "available"
+    )
+    assert (
+        at(report, "data", "current_wifi", "interfaces", 0, "statistics", "phy_counters", 0)
+        is not None
+    )
+    assert (
+        at(report, "data", "current_network", "interfaces", 0, "profile", "category") == "Private"
+    )
+    assert at(report, "data", "current_network", "interfaces", 0, "addresses", 0, "classifications")
+    assert at(report, "data", "current_network", "routes", 0, "is_on_link") is False
+    access_point = at(report, "data", "nearby_wifi", "networks", 0, "access_points", 0)
+    assert at(access_point, "supported_rates_mbps") == [1.0, 2.0, 5.5]
+    assert at(access_point, "information_elements", "rsn", "akm_suites") == ["PSK"]
+    assert "raw_blob" not in str(access_point)
+    assert at(report, "data", "devices", "hosts", 0, "router_indication") is True
+    assert at(report, "data", "devices", "hosts", 0, "address_classifications")
+
+
 def test_unknown_native_values_have_stable_textual_representation() -> None:
     snapshot = sample_snapshot()
     assert snapshot.current_wifi is not None

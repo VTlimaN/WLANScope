@@ -48,6 +48,14 @@ class WifiConnectionMode(NativeWifiValue):
     )
 
 
+class WifiBssType(NativeWifiValue):
+    labels = (
+        (1, "Infrastructure"),
+        (2, "Independent"),
+        (3, "Any"),
+    )
+
+
 class WifiPhyType(NativeWifiValue):
     labels = (
         (0, "Unknown"),
@@ -98,6 +106,115 @@ class WifiCipher(NativeWifiValue):
         (0x100, "Group"),
         (0x101, "WEP"),
     )
+
+
+class WifiRadioState(NativeWifiValue):
+    labels = ((0, "Unknown"), (1, "On"), (2, "Off"))
+
+
+class WifiCapabilityState(Enum):
+    AVAILABLE = "Available"
+    UNAVAILABLE = "Unavailable"
+    UNSUPPORTED = "Unsupported"
+
+
+@dataclass(frozen=True, slots=True)
+class WifiAuthCipherPair:
+    authentication: WifiAuthentication
+    cipher: WifiCipher
+
+
+@dataclass(frozen=True, slots=True)
+class WifiAuthCipherCapabilities:
+    state: WifiCapabilityState
+    pairs: tuple[WifiAuthCipherPair, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.state is not WifiCapabilityState.AVAILABLE and self.pairs:
+            raise ValueError("Unavailable security capabilities cannot contain pairs")
+
+
+@dataclass(frozen=True, slots=True)
+class WifiPhyRadioState:
+    phy_index: int
+    software_state: WifiRadioState
+    hardware_state: WifiRadioState
+
+    def __post_init__(self) -> None:
+        if self.phy_index < 0:
+            raise ValueError("PHY index cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class WifiInterfaceCapabilities:
+    interface_type: int
+    dot11d_supported: bool
+    maximum_desired_ssids: int
+    maximum_desired_bssids: int
+    supported_phy_types: tuple[WifiPhyType, ...]
+    infrastructure_security: WifiAuthCipherCapabilities = WifiAuthCipherCapabilities(
+        WifiCapabilityState.UNAVAILABLE
+    )
+    adhoc_security: WifiAuthCipherCapabilities = WifiAuthCipherCapabilities(
+        WifiCapabilityState.UNAVAILABLE
+    )
+
+    def __post_init__(self) -> None:
+        if min(self.interface_type, self.maximum_desired_ssids, self.maximum_desired_bssids) < 0:
+            raise ValueError("Wi-Fi capability values cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class WifiStatistics:
+    four_way_handshake_failures: int
+    tkip_countermeasures: int
+    unicast_transmitted_frames: int
+    unicast_received_frames: int
+    multicast_transmitted_frames: int
+    multicast_received_frames: int
+    decrypt_successes: int
+    decrypt_failures: int
+    phy_counters: tuple[WifiPhyStatistics, ...] = ()
+
+    def __post_init__(self) -> None:
+        values = (
+            self.four_way_handshake_failures,
+            self.tkip_countermeasures,
+            self.unicast_transmitted_frames,
+            self.unicast_received_frames,
+            self.multicast_transmitted_frames,
+            self.multicast_received_frames,
+            self.decrypt_successes,
+            self.decrypt_failures,
+        )
+        if any(value < 0 for value in values):
+            raise ValueError("Wi-Fi statistics cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class WifiPhyStatistics:
+    phy_index: int
+    transmitted_frames: int
+    received_frames: int
+    failed_transmissions: int
+    retry_frames: int
+    multiple_retry_frames: int
+    fcs_errors: int
+
+    def __post_init__(self) -> None:
+        if (
+            min(
+                self.phy_index,
+                self.transmitted_frames,
+                self.received_frames,
+                self.failed_transmissions,
+                self.retry_frames,
+                self.multiple_retry_frames,
+                self.fcs_errors,
+            )
+            < 0
+        ):
+            raise ValueError("Wi-Fi PHY statistics cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +277,7 @@ class WifiConnection:
     receive_rate_kbps: int | None
     transmit_rate_kbps: int | None
     security: WifiSecurity
+    bss_type: WifiBssType | None = None
 
     def __post_init__(self) -> None:
         if not self.state.is_connected:
@@ -192,6 +310,13 @@ class WifiInterfaceSnapshot:
     state: WifiInterfaceState
     connection: WifiConnection | None = None
     network_interface: NetworkInterface | None = None
+    capabilities: WifiInterfaceCapabilities | None = None
+    channel_number: int | None = None
+    rssi_dbm: int | None = None
+    operation_mode: int | None = None
+    management_frame_protection_capable: bool | None = None
+    radio_states: tuple[WifiPhyRadioState, ...] = ()
+    statistics: WifiStatistics | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "interface_id", normalize_stable_id(self.interface_id))
@@ -199,6 +324,12 @@ class WifiInterfaceSnapshot:
             raise ValueError("Wi-Fi interface description cannot be empty")
         if self.connection is not None and not self.state.is_connected:
             raise ValueError("A disconnected Wi-Fi interface cannot contain a connection")
+        if self.channel_number is not None and self.channel_number <= 0:
+            raise ValueError("Wi-Fi channel must be positive when available")
+
+    @property
+    def provenance(self) -> str:
+        return "Native WLAN API"
 
 
 @dataclass(frozen=True, slots=True)

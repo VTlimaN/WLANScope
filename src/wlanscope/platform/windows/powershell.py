@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from wlanscope.domain.interfaces import (
     AdapterEnrichment,
+    AdapterHardwareDetails,
+    AdapterStatistics,
     AdministrativeState,
     InterfaceEnrichmentError,
     MediaState,
@@ -19,7 +21,13 @@ ADAPTER_SCRIPT = "\n".join(
         "$ErrorActionPreference = 'Stop'",
         "$OutputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false",
         "$adapters = @(Get-NetAdapter -Name '*' -IncludeHidden -ErrorAction Stop)",
+        (
+            "$statistics = @(Get-NetAdapterStatistics -Name '*' -IncludeHidden "
+            "-ErrorAction SilentlyContinue)"
+        ),
         "$items = @($adapters | ForEach-Object {",
+        "    $adapter = $_",
+        "    $stats = @($statistics | Where-Object { $_.ifIndex -eq $adapter.ifIndex })[0]",
         "    [pscustomobject]@{",
         (
             "        InterfaceGuid = if ($null -eq $_.InterfaceGuid) "
@@ -56,6 +64,70 @@ ADAPTER_SCRIPT = "\n".join(
             "        TransmitLinkSpeed = if ($null -eq $_.TransmitLinkSpeed) "
             "{ $null } else { [uint64]$_.TransmitLinkSpeed }"
         ),
+        "        Statistics = if ($null -eq $stats) { $null } else { [pscustomobject]@{",
+        (
+            "            ReceivedBytes = if ($null -eq $stats.ReceivedBytes) "
+            "{ $null } else { [uint64]$stats.ReceivedBytes }"
+        ),
+        (
+            "            SentBytes = if ($null -eq $stats.SentBytes) "
+            "{ $null } else { [uint64]$stats.SentBytes }"
+        ),
+        (
+            "            ReceivedUnicastPackets = if ($null -eq $stats.ReceivedUnicastPackets) "
+            "{ $null } else { [uint64]$stats.ReceivedUnicastPackets }"
+        ),
+        (
+            "            SentUnicastPackets = if ($null -eq $stats.SentUnicastPackets) "
+            "{ $null } else { [uint64]$stats.SentUnicastPackets }"
+        ),
+        (
+            "            ReceivedMulticastPackets = if ($null -eq $stats.ReceivedMulticastPackets) "
+            "{ $null } else { [uint64]$stats.ReceivedMulticastPackets }"
+        ),
+        (
+            "            SentMulticastPackets = if ($null -eq $stats.SentMulticastPackets) "
+            "{ $null } else { [uint64]$stats.SentMulticastPackets }"
+        ),
+        (
+            "            ReceivedBroadcastPackets = if ($null -eq $stats.ReceivedBroadcastPackets) "
+            "{ $null } else { [uint64]$stats.ReceivedBroadcastPackets }"
+        ),
+        (
+            "            SentBroadcastPackets = if ($null -eq $stats.SentBroadcastPackets) "
+            "{ $null } else { [uint64]$stats.SentBroadcastPackets }"
+        ),
+        (
+            "            ReceivedDiscards = if ($null -eq $stats.ReceivedDiscardedPackets) "
+            "{ $null } else { [uint64]$stats.ReceivedDiscardedPackets }"
+        ),
+        (
+            "            OutboundDiscards = if ($null -eq $stats.OutboundDiscardedPackets) "
+            "{ $null } else { [uint64]$stats.OutboundDiscardedPackets }"
+        ),
+        (
+            "            ReceivedErrors = if ($null -eq $stats.ReceivedPacketErrors) "
+            "{ $null } else { [uint64]$stats.ReceivedPacketErrors }"
+        ),
+        (
+            "            OutboundErrors = if ($null -eq $stats.OutboundPacketErrors) "
+            "{ $null } else { [uint64]$stats.OutboundPacketErrors }"
+        ),
+        "        }}",
+        "        Hardware = [pscustomobject]@{",
+        (
+            "            ConnectorPresent = if ($null -eq $_.ConnectorPresent) "
+            "{ $null } else { [bool]$_.ConnectorPresent }"
+        ),
+        (
+            "            DriverDate = if ($null -eq $_.DriverDate) "
+            "{ $null } else { [string]$_.DriverDate }"
+        ),
+        (
+            "            DeviceId = if ($null -eq $_.PnPDeviceID) "
+            "{ $null } else { [string]$_.PnPDeviceID }"
+        ),
+        "        }",
         "    }",
         "})",
         "ConvertTo-Json -InputObject $items -Depth 3 -Compress",
@@ -188,7 +260,47 @@ def _parse_adapter_record(value: object) -> AdapterEnrichment:
         media_state=_media_state(record.get("MediaConnectionState")),
         receive_link_speed_bps=_positive_integer(record.get("ReceiveLinkSpeed")),
         transmit_link_speed_bps=_positive_integer(record.get("TransmitLinkSpeed")),
+        statistics=_adapter_statistics(record.get("Statistics")),
+        hardware=_adapter_hardware(record.get("Hardware")),
     )
+
+
+def _adapter_statistics(value: object) -> AdapterStatistics | None:
+    if value is None:
+        return None
+    record = _string_keyed_mapping(value)
+    names = (
+        "ReceivedBytes",
+        "SentBytes",
+        "ReceivedUnicastPackets",
+        "SentUnicastPackets",
+        "ReceivedMulticastPackets",
+        "SentMulticastPackets",
+        "ReceivedBroadcastPackets",
+        "SentBroadcastPackets",
+        "ReceivedDiscards",
+        "OutboundDiscards",
+        "ReceivedErrors",
+        "OutboundErrors",
+    )
+    statistics = AdapterStatistics(*(_optional_integer(record.get(name)) for name in names))
+    return statistics if statistics.has_values else None
+
+
+def _adapter_hardware(value: object) -> AdapterHardwareDetails | None:
+    if value is None:
+        return None
+    record = _string_keyed_mapping(value)
+    details = AdapterHardwareDetails(
+        connector_present=_optional_boolean(record.get("ConnectorPresent")),
+        driver_date=_optional_string(record.get("DriverDate")),
+        device_id=_optional_string(record.get("DeviceId")),
+    )
+    if all(
+        item is None for item in (details.connector_present, details.driver_date, details.device_id)
+    ):
+        return None
+    return details
 
 
 def _string_keyed_mapping(value: object) -> dict[str, object]:

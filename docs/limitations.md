@@ -15,16 +15,24 @@ The following limitations define the planned v1 scope:
 - Detail views reuse one scan snapshot. A network or access point can disappear or change immediately after that snapshot without altering the displayed data.
 - Duplicate visible SSIDs and multiple hidden entries are selected by their position and interface-specific identity within a snapshot, not by display text alone.
 - Multiple WLAN interfaces are preserved, but connection details can become stale independently while collection is in progress.
-- The Native WLAN API may not expose every driver-specific radio or security detail.
+- The Native WLAN API may not expose every driver-specific radio or security detail. Optional capability, radio, RSSI, operation-mode, management-frame-protection, and statistics queries depend on Windows version and driver support.
+- Realtime connection-quality and per-link MLO data use prerelease Windows WLAN contracts without a stable documented minimum supported release and are not collected. Multiple BSSIDs are never treated as evidence of MLO.
+- WLAN and adapter statistics are cumulative snapshots, not instantaneous throughput measurements. Drivers can omit or stop updating individual counters.
+- `Get-NetAdapterHardwareInfo` and vendor-specific advanced properties are not imported. Hardware details remain limited to stable identity, driver, connector, and PnP metadata exposed by the batch adapter inventory.
+- Parsed beacon and probe-response information is untrusted wireless input. WLANScope bounds and validates it, but intentionally interprets only a limited set of documented high-value information elements.
+- HE and EHT extension elements are preserved as bounded presence identifiers only. Their complex payloads are not decoded into capabilities.
+- Nearby unassociated networks do not expose their private IP configuration, gateway, DNS, DHCP, public IP, ISP, or last-mile technology. WLANScope does not infer those values or perform an external lookup.
 - Collectors may return partial results when a source is unavailable, unsupported, denied, or malformed.
 - Redirected CLI output is non-interactive and deterministic. Partial-result warnings and operational diagnostics are written to standard error, so pipelines that require diagnostics must capture both output streams.
 - Interactive mode requires both terminal input and terminal output. The root command prints help instead of opening a menu when either stream is redirected.
 - Interactive data remains point-in-time. Returning from a detail view preserves the current snapshot, and a new collection occurs only after an explicit Refresh action.
 - Compact terminal layouts omit secondary table columns below 100 columns. Commands with detail views and persistent reports retain the complete collected data.
 - PowerShell networking cmdlets and CIM can be denied by Windows policy. IP Helper results remain available while affected DNS, metric, or DHCP enrichment is reported as partial.
-- DHCP lease timestamps are not collected because the optional CIM source is not sufficiently available to make them a dependable M3 contract.
+- DHCP lease timestamps are optional CIM enrichment and can remain unavailable even when DHCP state and server information are known through IP Helper.
+- DNS suffix search policy is not collected; adapter-specific suffix and registration state remain available through structured adapter configuration.
 - Multiple default routes and VPN routing are preserved. A single preferred route is not asserted when effective metrics are missing or tied.
-- Adapter manufacturer, driver, hidden, and virtual metadata depends on `Get-NetAdapter` availability and may be reported as unavailable while the primary IP Helper inventory remains usable.
+- Adapter manufacturer, driver, hidden, virtual, hardware, and cumulative statistics metadata depends on NetAdapter cmdlet and driver availability and may be reported as unavailable while the primary IP Helper inventory remains usable.
+- Network profile name, category, and Windows IPv4/IPv6 connectivity classifications depend on `Get-NetConnectionProfile`; absence of a profile does not invalidate IP configuration.
 - Interface state is observed at collection time and can change immediately afterward.
 - Physical and virtual classification uses structured Windows fields. M1 does not infer VPN status from adapter names.
 - A full scan will combine observations made at different times and will not represent an atomic network snapshot.
@@ -44,6 +52,7 @@ The following limitations define the planned v1 scope:
 - The current vendor lookup covers 24-bit MA-L assignments only. Unknown prefixes and valid assignments of other sizes remain unavailable.
 - Locally administered and randomized MAC addresses are deliberately not attributed to a global organization.
 - An OUI organization identifies an address assignment holder; it does not prove device type, model, operating system, ownership, or current manufacturer.
+- Neighbor-cache router indication, self status, gateway status, hostname, and vendor are role evidence only. WLANScope does not convert them into a guessed device type.
 - WLANScope will not provide offensive wireless operations, credential access, exploitation, packet manipulation, or access-control bypass.
 
 These constraints will be presented with scan results where they materially affect interpretation.

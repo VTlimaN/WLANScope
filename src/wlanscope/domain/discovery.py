@@ -106,12 +106,34 @@ class DiscoveredHost:
     reachability: ReachabilityState
     sources: frozenset[DiscoverySource]
     neighbor_state: NeighborState | None = None
+    is_router: bool = False
 
     def __post_init__(self) -> None:
         if self.interface_index < 0:
             raise ValueError("Interface index cannot be negative")
         if not self.sources:
             raise ValueError("A discovered host requires at least one source")
+
+    @property
+    def address_family(self) -> str:
+        return "IPv4" if isinstance(self.address, IPv4Address) else "IPv6"
+
+    @property
+    def address_classifications(self) -> tuple[str, ...]:
+        labels: list[str] = []
+        for present, label in (
+            (self.address.is_global, "Global"),
+            (self.address.is_private, "Private"),
+            (self.address.is_loopback, "Loopback"),
+            (self.address.is_link_local, "Link-local"),
+            (self.address.is_multicast, "Multicast"),
+            (self.address.is_unspecified, "Unspecified"),
+        ):
+            if present:
+                labels.append(label)
+        if isinstance(self.address, IPv6Address) and int(self.address) >> 121 == 0b1111110:
+            labels.append("Unique-local")
+        return tuple(labels)
 
 
 @dataclass(frozen=True, slots=True)

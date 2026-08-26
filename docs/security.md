@@ -16,7 +16,11 @@ The current Wi-Fi command reads non-secret profile and connection metadata throu
 
 Nearby Wi-Fi discovery is passive, read-only observation after a Windows-managed scan request. It does not bypass location restrictions, deauthenticate clients, connect or disconnect networks, modify profiles, or request profile key material.
 
+Beacon and probe-response information elements are attacker-controlled input. WLANScope copies them only after validating the native BSS buffer bounds, caps their size, parses them without recursion or execution, tolerates malformed elements, and persists only selected interpreted metadata rather than full raw blobs.
+
 Current network analysis is read-only. WLANScope does not create or remove addresses or routes, change metrics or DNS servers, renew DHCP leases, or modify adapter configuration.
+
+Optional deep inspection uses only local Native WLAN, IP Helper, NetAdapter, NetConnectionProfile, and CIM data. It performs no public-IP, ISP, geolocation, WHOIS, telemetry, or other external lookup. Adapter statistics are read in batch and no command changes radio, adapter, profile, or advanced-property state.
 
 Local device discovery is confined to the IPv4 subnet selected from the host's default routing context. It reads the Windows neighbor cache and sends only bounded ICMP Echo requests. It does not accept arbitrary target CIDRs. Ranges above 256 usable addresses require an explicit command-line authorization, and ranges above 4,096 are refused. IPv6 is not swept.
 
@@ -57,6 +61,8 @@ Reports will be created only when explicitly requested and will not contain cred
 CLI reliability changes do not expand collection scope, bypass privacy controls, authorize arbitrary targets, or add active network techniques.
 
 The interactive menu composes the same approved use cases and does not expand their authority. Large local ranges still require an explicit action, reports still require user-supplied paths and explicit overwrite confirmation, and navigation never enables background collection or monitoring.
+
+Deep inspection does not add port or service scanning, OS fingerprinting, profile-key access, Wi-Fi connection attempts, packet injection, or network mutation. Vendor-specific wireless elements are not used to guess router models, firmware, vulnerabilities, or exploitability.
 
 ## Reporting vulnerabilities
 
