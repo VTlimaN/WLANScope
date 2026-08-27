@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Event
 from typing import cast
 
+import pytest
 from rich.console import Console
 
 from tests.reporting_samples import sample_snapshot
@@ -214,6 +215,10 @@ def test_root_tty_opens_menu_and_exits() -> None:
     assert "Current Network" in output.getvalue()
     assert "Observed Devices" in output.getvalue()
     assert "About" in output.getvalue()
+    assert "Windows Wireless & Network Reconnaissance" in output.getvalue()
+    assert "WLANScope Note" in output.getvalue()
+    assert "Created by sasser" in output.getvalue()
+    assert __version__ in output.getvalue()
 
 
 def test_root_non_tty_prints_help_without_reading_input() -> None:
@@ -232,6 +237,20 @@ def test_root_non_tty_prints_help_without_reading_input() -> None:
     assert "usage: wlanscope" in output.getvalue()
     assert "\x1b" not in output.getvalue()
     assert reader.prompts == []
+
+
+@pytest.mark.parametrize("width", (80, 120, 160))
+def test_root_landing_remains_complete_at_supported_widths(width: int) -> None:
+    exit_code, output, _, reader = run_session(["0"], width=width)
+
+    assert exit_code == 0
+    assert "Windows Wireless & Network Reconnaissance" in output
+    assert "Main Menu" in output
+    assert "WLANScope Note" in output
+    assert "Created by sasser" in output
+    assert __version__ in output
+    assert reader.prompts == ["Select an option: "]
+    assert max(map(len, output.splitlines())) <= width
 
 
 def test_clear_requires_tty_and_enabled() -> None:
@@ -683,9 +702,11 @@ def test_about_uses_package_metadata_without_machine_data() -> None:
     exit_code, output, _, _ = run_session(["7", "0", "0"])
 
     assert exit_code == 0
-    assert output.count("Author") == 1
-    assert "sasser" in output
-    assert output.count(__version__) == 1
+    about = output[output.index("WLANScope  About") : output.rindex("Main Menu")]
+    assert about.count("Created by") == 1
+    assert about.count("sasser") == 1
+    assert about.count("Version") == 1
+    assert about.count(__version__) == 1
     assert "C:\\Users" not in output
 
 

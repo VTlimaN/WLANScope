@@ -1,3 +1,9 @@
+from wlanscope.presentation.branding import (
+    Branding,
+    create_about_identity,
+    create_branding,
+    create_technical_note,
+)
 from wlanscope.presentation.components import (
     create_data_table,
     create_empty_state,
@@ -26,7 +32,10 @@ from wlanscope.presentation.theme import STATUS_STYLES, WLANSCOPE_THEME
 __all__ = (
     "STATUS_STYLES",
     "WLANSCOPE_THEME",
+    "Branding",
     "LayoutMode",
+    "create_about_identity",
+    "create_branding",
     "create_data_table",
     "create_empty_state",
     "create_key_value_table",
@@ -34,6 +43,7 @@ __all__ = (
     "create_notice",
     "create_screen_header",
     "create_status_badge",
+    "create_technical_note",
     "format_bool",
     "format_bytes",
     "format_duration",

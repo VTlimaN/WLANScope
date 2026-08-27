@@ -43,12 +43,15 @@ from wlanscope.domain.network import (
 )
 from wlanscope.domain.wifi import CurrentWifiSnapshot, WifiCollectionError, WifiInterfaceSnapshot
 from wlanscope.presentation import (
+    create_about_identity,
+    create_branding,
     create_data_table,
     create_empty_state,
     create_key_value_table,
     create_main_menu,
     create_notice,
     create_screen_header,
+    create_technical_note,
     format_bool,
     format_bytes,
     format_rate,
@@ -138,15 +141,13 @@ class InteractiveSession:
 
     def _render_main_menu(self) -> None:
         self._clear()
-        self._console.print(
-            create_screen_header(
-                "Windows Wireless & Network Reconnaissance",
-                "Local network visibility and wireless inspection",
-            )
-        )
+        branding = create_branding(self._console.width, __version__)
+        self._console.print(branding.header)
+        self._console.print()
         self._console.print(create_main_menu(self._console.width))
+        self._console.print(create_technical_note(self._console.width))
         self._console.print(navigation_text(("0", "Exit"), ("Q", "Exit")))
-        self._console.print("sasser", style="dim")
+        self._console.print(branding.metadata)
 
     def _clear(self) -> None:
         if self._clear_enabled:
@@ -773,16 +774,9 @@ class InteractiveSession:
             )
 
     def _about(self) -> None:
-        self._begin_screen("About", "Windows Wireless & Network Reconnaissance")
-        self._console.print(
-            create_key_value_table(
-                (
-                    ("Version", __version__),
-                    ("Author", "sasser"),
-                    ("Purpose", "Read-only Windows wireless and local network visibility"),
-                )
-            )
-        )
+        self._begin_screen("About")
+        self._console.print(create_about_identity(__version__))
+        self._console.print()
         self._console.print("Capabilities", style="bold")
         self._console.print("Current network inspection")
         self._console.print("Nearby Wi-Fi observation")
