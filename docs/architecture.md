@@ -16,7 +16,8 @@ M9 provides persistent JSON and Markdown reporting without adding collection beh
 The planned dependency flow is:
 
 ```text
-CLI
+CLI / Interactive
+  -> Presentation
   -> Application
     -> Domain
     -> Windows platform adapters
@@ -79,6 +80,14 @@ Interactive navigation retains nearby Wi-Fi, device, interface, and full-scan sn
 Current Network collects M1 once per explicit refresh, supplies those interfaces to M2, and supplies both results to the association-aware M3 entry point. This avoids repeating interface and current Wi-Fi association collection within the same interactive refresh.
 
 The root dispatch requires both stdin and stdout to be terminals. Non-TTY execution prints help without reading input. EOF exits normally, while `Ctrl+C` returns 130 through the interactive boundary without changing the operational exception policy of individual use cases.
+
+M10.7 introduces `wlanscope.presentation` as a narrow terminal-rendering boundary. `theme.py` owns the single semantic Rich theme and textual status mapping, `formatting.py` owns pure unit and value formatting plus the compact/standard/wide breakpoints, `components.py` owns reusable literal-safe tables, headers, menus, notices, and empty states, and `rendering.py` owns the Current Network overview and adaptive Full Scan summaries. The presentation package receives immutable domain models and imports no collectors, use cases, PowerShell, ctypes, or Windows APIs.
+
+String cells created by presentation tables are converted to literal `Text` values before Rich renders them. SSIDs, adapter and profile names, hostnames, vendors, issue messages, and paths therefore cannot inject Rich markup. Trusted labels and semantic status styles remain explicit UI content.
+
+InteractiveSession retains navigation, selection, refresh, cancellation, and use-case invocation. Returning from a Current Network detail redraws the existing overview without collecting another snapshot. `Console.clear()` is gated by interactive execution, terminal detection, and the injectable clear flag. Subcommands retain argparse dispatch and exit-code handling; non-TTY root and subcommand paths remain deterministic and do not add prompts or clearing.
+
+Presentation layouts use three stable modes: compact below 100 columns, standard from 100 through 139, and wide from 140 columns. Compact views retain IP, MAC, BSSID, interface identity, and other primary values while omitting secondary metadata. Wide views expose additional hardware, radio, neighbor, role-evidence, and full-scan summary fields without changing the underlying snapshots or reports.
 
 M10.6 extends existing boundaries rather than adding a new pipeline. A current WLAN collection reuses one Native WLAN session to query optional interface capability, infrastructure and ad hoc authentication/cipher capability lists, channel, RSSI, operation mode, management-frame-protection capability, radio state, and cumulative WLAN statistics. General MAC counters and bounded high-value per-PHY counters follow the documented variable-length `WLAN_STATISTICS` layout. Every API-owned query buffer is length-checked, copied, and released with `WlanFreeMemory`; unsupported opcodes have explicit capability state and do not fail the base connection snapshot.
 

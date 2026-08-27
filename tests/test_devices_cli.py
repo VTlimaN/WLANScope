@@ -255,7 +255,7 @@ def test_devices_displays_resolved_hostname_and_vendor_literally() -> None:
     enrichment = EnrichDeviceInventory(ResolvedHostnames(), ResolvedVendors())
 
     exit_code, output = run_devices(
-        FakeDevices(make_inventory()), ["devices"], enrichment, width=140
+        FakeDevices(make_inventory()), ["devices"], enrichment, width=240
     )
 
     assert exit_code == 0
@@ -295,8 +295,10 @@ def test_devices_systemic_enrichment_issue_returns_partial() -> None:
 def test_devices_compact_width_omits_wide_columns() -> None:
     exit_code, output = run_devices(FakeDevices(make_inventory()), ["devices"], width=80)
 
-    header = next(line for line in output.splitlines() if "Hostname" in line)
+    header = next(line for line in output.splitlines() if "Idx" in line)
     assert exit_code == 0
-    assert "MAC" not in header
-    assert "Sources" not in header
+    assert "IP" in header
+    assert "MAC" in header
+    assert "State" in header
+    assert "Hostname" not in header
     assert len(max(output.splitlines(), key=len)) <= 80

@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from threading import Event
 
-from rich.console import Console
+from rich.console import Console, RenderableType
 from rich.table import Table
 from rich.text import Text
 
@@ -42,7 +42,6 @@ from wlanscope.domain.full_scan import FullNetworkSnapshot, FullScanStatus
 from wlanscope.domain.interfaces import (
     InterfaceCollectionError,
     NetworkInterface,
-    OperationalState,
 )
 from wlanscope.domain.nearby_wifi import WifiAccessPoint, WifiNetwork
 from wlanscope.domain.network import (
@@ -59,11 +58,38 @@ from wlanscope.domain.wifi import (
     WifiConnection,
     WifiInterfaceSnapshot,
 )
+from wlanscope.presentation import (
+    WLANSCOPE_THEME,
+    LayoutMode,
+    create_data_table,
+    create_key_value_table,
+    create_notice,
+    create_screen_header,
+    format_bool,
+    format_frequency,
+    format_rate,
+    layout_mode,
+)
+from wlanscope.presentation.rendering import (
+    create_full_scan_issues,
+    create_full_scan_overview,
+    create_full_scan_section_table,
+    create_full_scan_summary,
+    render_current_network_overview,
+)
 from wlanscope.reporting.writer import ReportWriteError
 from wlanscope.version import __version__
 
 PROJECT_NAME = "WLANScope"
 PROJECT_TAGLINE = "Windows Wireless & Network Reconnaissance"
+
+
+def _print_command_header(console: Console, title: str) -> None:
+    if console.is_terminal:
+        console.print(create_screen_header(title))
+        return
+    console.print(PROJECT_NAME, style="bold")
+    console.print(title, style="dim")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -193,8 +219,10 @@ def main(
 ) -> int:
     parser = build_parser()
     parsed_arguments = parser.parse_args(arguments)
-    output = console or Console()
-    diagnostics = error_console or (console if console is not None else Console(stderr=True))
+    output = console or Console(theme=WLANSCOPE_THEME)
+    diagnostics = error_console or (
+        console if console is not None else Console(stderr=True, theme=WLANSCOPE_THEME)
+    )
     if (
         parsed_arguments.command == "wifi"
         and parsed_arguments.wifi_command == "scan"
@@ -316,13 +344,12 @@ def _run_interactive(
         InteractiveRenderers(
             _create_interface_table,
             _create_wifi_table,
-            _relevant_network_contexts,
-            _create_network_context_table,
             _create_nearby_wifi_table,
             _render_nearby_wifi_details,
             _create_access_point_detail_table,
             _create_device_table,
             _render_device_summary,
+            render_current_network_overview,
             _create_full_scan_overview,
             _create_full_scan_section_table,
             _create_full_scan_summary,
@@ -399,28 +426,16 @@ def _run_full_scan(
         error_console.print("[yellow]Full network scan canceled.[/yellow]")
         return 130
 
-    console.print(f"[bold]{PROJECT_NAME}[/bold]")
-    console.print("Full Network Scan", style="dim")
+    _print_command_header(console, "Full Network Scan")
     console.print(_create_full_scan_overview(snapshot))
-    console.print("Section Status", style="bold")
     console.print(_create_full_scan_section_table(snapshot))
-    console.print("Network Summary", style="bold")
-    console.print(_create_full_scan_summary(snapshot))
+    console.print(_create_full_scan_summary(snapshot, console.width))
     if snapshot.issues:
-        error_console.print("Issues", style="bold")
-        for issue in snapshot.issues:
-            error_console.print(
-                Text.assemble(
-                    ("[", "yellow"),
-                    Text(issue.section.value, style="yellow"),
-                    ("] ", "yellow"),
-                    Text(issue.message),
-                )
-            )
+        error_console.print(create_full_scan_issues(snapshot))
     try:
         exports = report_exporter.execute(snapshot, json_path, markdown_path, force)
     except (ReportPathError, ReportWriteError) as error:
-        error_console.print("[bold red]Report error:[/bold red]", Text(f" {error}"))
+        error_console.print(create_notice("Failed", error, "Report error"))
         return 1
     if exports:
         console.print("Reports written", style="bold")
@@ -438,68 +453,19 @@ def _run_full_scan(
     }[snapshot.status]
 
 
-def _create_full_scan_overview(snapshot: FullNetworkSnapshot) -> Table:
-    table = _create_detail_table()
-    table.add_row("Status", snapshot.status.value)
-    table.add_row("Duration", f"{snapshot.duration_seconds:.1f} seconds")
-    table.add_row("Warnings", str(len(snapshot.issues)))
-    return table
+def _create_full_scan_overview(snapshot: FullNetworkSnapshot) -> RenderableType:
+    return create_full_scan_overview(snapshot)
 
 
-def _create_full_scan_section_table(snapshot: FullNetworkSnapshot) -> Table:
-    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
-    table.add_column("Section", overflow="fold")
-    table.add_column("Status", no_wrap=True)
-    for result in snapshot.sections:
-        table.add_row(result.section.value, result.status.value)
-    return table
+def _create_full_scan_section_table(snapshot: FullNetworkSnapshot) -> RenderableType:
+    return create_full_scan_section_table(snapshot)
 
 
-def _create_full_scan_summary(snapshot: FullNetworkSnapshot) -> Table:
-    table = _create_detail_table()
-    interfaces = snapshot.interfaces.interfaces if snapshot.interfaces is not None else ()
-    connected_wifi = (
-        any(interface.state.is_connected for interface in snapshot.current_wifi.interfaces)
-        if snapshot.current_wifi is not None
-        else False
-    )
-    contexts = snapshot.current_network.interfaces if snapshot.current_network is not None else ()
-    addresses = tuple(address for context in contexts for address in context.addresses)
-    routes = snapshot.current_network.default_routes if snapshot.current_network is not None else ()
-    nearby_networks = snapshot.nearby_wifi.networks if snapshot.nearby_wifi is not None else ()
-    bss_count = sum(len(network.access_points) for network in nearby_networks)
-    devices = snapshot.devices
-    table.add_row("Interfaces", str(len(interfaces)))
-    table.add_row(
-        "Interfaces up",
-        str(sum(interface.operational_state is OperationalState.UP for interface in interfaces)),
-    )
-    table.add_row("Current Wi-Fi connected", _yes_no(connected_wifi))
-    table.add_row("IPv4 present", _yes_no(any(item.address.version == 4 for item in addresses)))
-    table.add_row("IPv6 present", _yes_no(any(item.address.version == 6 for item in addresses)))
-    table.add_row(
-        "IPv4 default route",
-        _yes_no(any(route.destination.version == 4 for route in routes)),
-    )
-    table.add_row(
-        "IPv6 default route",
-        _yes_no(any(route.destination.version == 6 for route in routes)),
-    )
-    table.add_row("Nearby Wi-Fi networks", str(len(nearby_networks)))
-    table.add_row("Nearby BSS observations", str(bss_count))
-    table.add_row(
-        "Observed hosts",
-        str(len(devices.hosts)) if devices is not None else "Unavailable",
-    )
-    table.add_row(
-        "PTR resolved",
-        str(devices.ptr_resolved_count) if devices is not None else "Unavailable",
-    )
-    table.add_row(
-        "Vendors resolved",
-        str(devices.vendor_resolved_count) if devices is not None else "Unavailable",
-    )
-    return table
+def _create_full_scan_summary(
+    snapshot: FullNetworkSnapshot,
+    terminal_width: int = 120,
+) -> RenderableType:
+    return create_full_scan_summary(snapshot, terminal_width)
 
 
 def _yes_no(value: bool) -> str:
@@ -532,8 +498,7 @@ def _discover_devices(
         error_console.print("[bold red]Discovery unavailable:[/bold red]", Text(f" {error}"))
         return 1
 
-    console.print(f"[bold]{PROJECT_NAME}[/bold]")
-    console.print("Local Network Discovery", style="dim")
+    _print_command_header(console, "Local Network Discovery")
     if inventory.plan.usable_host_count > 1_024:
         error_console.print(
             "[yellow]Warning:[/yellow] Explicitly authorized discovery of a large local range."
@@ -562,16 +527,31 @@ def _discover_devices(
 
 
 def _create_device_table(inventory: EnrichedDeviceInventory, terminal_width: int) -> Table:
-    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
-    table.add_column("IP", no_wrap=True)
-    table.add_column("Hostname", overflow="fold")
-    table.add_column("Vendor", overflow="fold")
-    table.add_column("State", no_wrap=True)
-    compact = terminal_width < 100
-    if not compact:
-        table.add_column("MAC", no_wrap=True)
-        table.add_column("Sources", overflow="fold")
-    for host in inventory.hosts:
+    mode = layout_mode(terminal_width)
+    columns: list[tuple[str, dict[str, object]]] = [
+        ("Idx", {"justify": "right", "no_wrap": True}),
+        ("IP", {"no_wrap": True}),
+        ("MAC", {"no_wrap": True}),
+    ]
+    if mode is LayoutMode.COMPACT:
+        columns.append(("State", {"no_wrap": True}))
+    else:
+        columns.extend(
+            (
+                ("Hostname", {"overflow": "fold"}),
+                ("Vendor", {"overflow": "fold"}),
+                ("Evidence", {"overflow": "fold"}),
+            )
+        )
+    if mode is LayoutMode.WIDE:
+        columns.extend(
+            (
+                ("Neighbor State", {"no_wrap": True}),
+                ("Role evidence", {"overflow": "fold"}),
+            )
+        )
+    table = create_data_table(tuple(columns))
+    for index, host in enumerate(inventory.hosts, start=1):
         sources = ", ".join(
             _format_discovery_source(source)
             for source in sorted(host.discovered.sources, key=lambda item: item.value)
@@ -583,18 +563,38 @@ def _create_device_table(inventory: EnrichedDeviceInventory, terminal_width: int
         ):
             state = host.discovered.neighbor_state.display_name
         row: list[str | Text] = [
+            str(index),
             str(host.discovered.address),
-            Text(_hostname_display(host.hostname.state, host.hostname.hostname)),
-            Text(_vendor_display(host.vendor.state, host.vendor.vendor)),
-            state,
+            str(host.discovered.mac_address)
+            if host.discovered.mac_address is not None
+            else "Unavailable",
         ]
-        if not compact:
+        if mode is LayoutMode.COMPACT:
+            row.append(state)
+        else:
             row.extend(
                 (
-                    str(host.discovered.mac_address)
-                    if host.discovered.mac_address is not None
-                    else "Unknown",
-                    sources,
+                    Text(_hostname_display(host.hostname.state, host.hostname.hostname)),
+                    Text(_vendor_display(host.vendor.state, host.vendor.vendor)),
+                    f"{state}; {sources}",
+                )
+            )
+        if mode is LayoutMode.WIDE:
+            role_evidence = ", ".join(
+                label
+                for present, label in (
+                    (DiscoverySource.SELF in host.discovered.sources, "Self"),
+                    (DiscoverySource.GATEWAY in host.discovered.sources, "Gateway"),
+                    (host.discovered.is_router, "Router indication"),
+                )
+                if present
+            )
+            row.extend(
+                (
+                    host.discovered.neighbor_state.display_name
+                    if host.discovered.neighbor_state is not None
+                    else "Unavailable",
+                    role_evidence or "None reported",
                 )
             )
         table.add_row(*row)
@@ -651,8 +651,7 @@ def _list_adapters(
         )
         return 1
 
-    console.print(f"[bold]{PROJECT_NAME}[/bold]")
-    console.print("Network Interfaces", style="dim")
+    _print_command_header(console, "Network Interfaces")
 
     if not inventory.interfaces:
         console.print("No network interfaces were returned by Windows.")
@@ -666,15 +665,29 @@ def _list_adapters(
 
 
 def _create_interface_table(interfaces: tuple[NetworkInterface, ...], terminal_width: int) -> Table:
-    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
-    table.add_column("Index", justify="right", no_wrap=True)
-    table.add_column("Type", no_wrap=True)
-    table.add_column("State", no_wrap=True)
-    table.add_column("Name", overflow="fold")
-    compact = terminal_width < 100
-    if not compact:
-        table.add_column("MAC", no_wrap=True)
-        table.add_column("Link", justify="right", no_wrap=True)
+    mode = layout_mode(terminal_width)
+    columns: list[tuple[str, dict[str, object]]] = [
+        ("Idx", {"justify": "right", "no_wrap": True}),
+        ("Type", {"no_wrap": True}),
+        ("State", {"no_wrap": True}),
+        ("Name", {"overflow": "fold"}),
+    ]
+    if mode is not LayoutMode.COMPACT:
+        columns.extend(
+            (
+                ("MAC", {"no_wrap": True}),
+                ("Speed", {"justify": "right", "no_wrap": True}),
+            )
+        )
+    if mode is LayoutMode.WIDE:
+        columns.extend(
+            (
+                ("MTU", {"justify": "right", "no_wrap": True}),
+                ("Manufacturer", {"overflow": "fold"}),
+                ("Virtual", {"no_wrap": True}),
+            )
+        )
+    table = create_data_table(tuple(columns))
 
     for interface in interfaces:
         row: list[str | Text] = [
@@ -683,11 +696,19 @@ def _create_interface_table(interfaces: tuple[NetworkInterface, ...], terminal_w
             interface.operational_state.value,
             Text(interface.friendly_name),
         ]
-        if not compact:
+        if mode is not LayoutMode.COMPACT:
             row.extend(
                 (
                     str(interface.mac_address) if interface.mac_address else "Unknown",
                     _format_link_speed(interface),
+                )
+            )
+        if mode is LayoutMode.WIDE:
+            row.extend(
+                (
+                    str(interface.mtu) if interface.mtu is not None else "Unavailable",
+                    Text(interface.manufacturer or "Unavailable"),
+                    format_bool(interface.is_virtual),
                 )
             )
         table.add_row(*row)
@@ -707,15 +728,7 @@ def _format_link_speed(interface: NetworkInterface) -> str:
 
 
 def _format_bits_per_second(value: int | None) -> str:
-    if value is None:
-        return "Unknown"
-    units = ((1_000_000_000, "Gbps"), (1_000_000, "Mbps"), (1_000, "Kbps"))
-    for divisor, suffix in units:
-        if value >= divisor:
-            amount = value / divisor
-            precision = 0 if amount.is_integer() else 1
-            return f"{amount:.{precision}f} {suffix}"
-    return f"{value} bps"
+    return format_rate(value)
 
 
 def _inspect_wifi(
@@ -729,8 +742,7 @@ def _inspect_wifi(
         error_console.print("[bold red]Current Wi-Fi unavailable:[/bold red]", Text(f" {error}"))
         return 1
 
-    console.print(f"[bold]{PROJECT_NAME}[/bold]")
-    console.print("Current Wi-Fi", style="dim")
+    _print_command_header(console, "Current Wi-Fi")
     if not snapshot.interfaces:
         console.print("No Wi-Fi interfaces were reported by Windows.")
     else:
@@ -750,17 +762,18 @@ def _render_wifi_interfaces(snapshot: CurrentWifiSnapshot, console: Console) -> 
 
 
 def _create_wifi_table(interface: WifiInterfaceSnapshot) -> Table:
-    table = Table(show_header=False, box=None, pad_edge=False)
-    table.add_column("Field", style="bold", no_wrap=True)
-    table.add_column("Value", overflow="fold")
+    table = _create_detail_table()
     name = (
         interface.network_interface.friendly_name
         if interface.network_interface is not None
         else interface.description
     )
+    table.add_row("Association", "")
     table.add_row("Interface", Text(name))
     table.add_row("State", interface.state.display_name)
     table.add_row("Wi-Fi data source", interface.provenance)
+    table.add_section()
+    table.add_row("Radio / Signal", "")
     table.add_row(
         "Channel",
         str(interface.channel_number) if interface.channel_number is not None else "Unavailable",
@@ -775,6 +788,8 @@ def _create_wifi_table(interface: WifiInterfaceSnapshot) -> Table:
         else "Unavailable",
     )
     if interface.capabilities is not None:
+        table.add_section()
+        table.add_row("Capabilities", "")
         table.add_row(
             "Supported PHYs",
             ", ".join(phy.display_name for phy in interface.capabilities.supported_phy_types)
@@ -806,6 +821,8 @@ def _create_wifi_table(interface: WifiInterfaceSnapshot) -> Table:
         "MFP capability", _format_optional_boolean(interface.management_frame_protection_capable)
     )
     if interface.statistics is not None:
+        table.add_section()
+        table.add_row("Statistics", "")
         table.add_row(
             "Wi-Fi frames",
             f"Tx {interface.statistics.unicast_transmitted_frames}; "
@@ -826,6 +843,8 @@ def _create_wifi_table(interface: WifiInterfaceSnapshot) -> Table:
     else:
         table.add_row("Wi-Fi statistics", "Unavailable")
     if interface.connection is not None:
+        table.add_section()
+        table.add_row("Security / Current Connection", "")
         _add_connection_rows(table, interface.connection)
     return table
 
@@ -882,8 +901,7 @@ def _scan_nearby_wifi(
         error_console.print("[bold red]Nearby Wi-Fi unavailable:[/bold red]", Text(f" {error}"))
         return 1
 
-    console.print(f"[bold]{PROJECT_NAME}[/bold]")
-    console.print("Nearby Wi-Fi Networks", style="dim")
+    _print_command_header(console, "Nearby Wi-Fi Networks")
     if not snapshot.interfaces:
         console.print("No Wi-Fi interfaces were reported by Windows.")
     elif not snapshot.networks:
@@ -974,14 +992,17 @@ def _create_nearby_network_detail_table(details: NearbyWifiNetworkDetails) -> Ta
 def _create_access_point_summary_table(
     access_points: tuple[WifiAccessPoint, ...],
 ) -> Table:
-    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
-    table.add_column("#", justify="right", no_wrap=True)
-    table.add_column("BSSID", no_wrap=True)
-    table.add_column("Signal", justify="right", no_wrap=True)
-    table.add_column("RSSI", justify="right", no_wrap=True)
-    table.add_column("PHY", no_wrap=True)
-    table.add_column("Band", no_wrap=True)
-    table.add_column("Channel", justify="right", no_wrap=True)
+    table = create_data_table(
+        (
+            ("Idx", {"justify": "right", "no_wrap": True}),
+            ("BSSID", {"no_wrap": True}),
+            ("Signal", {"justify": "right", "no_wrap": True}),
+            ("RSSI", {"justify": "right", "no_wrap": True}),
+            ("PHY", {"no_wrap": True}),
+            ("Band", {"no_wrap": True}),
+            ("Channel", {"justify": "right", "no_wrap": True}),
+        )
+    )
     for index, access_point in enumerate(access_points, start=1):
         table.add_row(
             str(index),
@@ -997,6 +1018,7 @@ def _create_access_point_summary_table(
 
 def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
     table = _create_detail_table()
+    table.add_row("Identity", "")
     table.add_row("BSSID", str(access_point.bssid))
     table.add_row("SSID", Text(access_point.ssid.display_text or "<Hidden>"))
     table.add_row("Interface identifier", Text(access_point.interface_id))
@@ -1007,11 +1029,15 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
     table.add_row(
         "BSS type", str(access_point.bss_type) if access_point.bss_type is not None else "Unknown"
     )
+    table.add_section()
+    table.add_row("Signal / Radio", "")
     table.add_row("In regulatory domain", _format_optional_boolean(access_point.in_reg_domain))
     table.add_row("Signal quality", f"{access_point.signal_quality}%")
     table.add_row("RSSI", f"{access_point.rssi_dbm} dBm")
     table.add_row("Center frequency", _format_center_frequency(access_point.center_frequency_khz))
     table.add_row("Band", access_point.band.value)
+    table.add_section()
+    table.add_row("Beacon", "")
     table.add_row(
         "Channel",
         str(access_point.channel) if access_point.channel is not None else "Unknown",
@@ -1047,6 +1073,8 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
         if access_point.host_observed_at is not None
         else "Unavailable",
     )
+    table.add_section()
+    table.add_row("Rates / Capabilities", "")
     table.add_row(
         "Supported rates",
         ", ".join(f"{rate:g} Mbps" for rate in access_point.supported_rates_mbps) or "Unavailable",
@@ -1057,6 +1085,8 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
     )
     table.add_row("Capability flags", ", ".join(access_point.capability_flags) or "None reported")
     elements = access_point.information_elements
+    table.add_section()
+    table.add_row("Security / Information Elements", "")
     table.add_row("Advertised-data provenance", access_point.provenance)
     table.add_row("Country", elements.country_code or "Unavailable")
     table.add_row("RSN", "Present" if elements.rsn is not None else "Unavailable")
@@ -1087,6 +1117,12 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
         else "Absent",
     )
     table.add_row(
+        "Extension element IDs",
+        ", ".join(map(str, elements.extension_element_ids)) or "None reported",
+    )
+    table.add_row("Vendor IE count", str(len(elements.vendor_specific_ouis)))
+    table.add_row("Unknown IE count", str(len(elements.unknown_element_ids)))
+    table.add_row(
         "IE parse status",
         "Unavailable" if not elements.available else "Malformed" if elements.malformed else "Valid",
     )
@@ -1094,36 +1130,42 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
 
 
 def _create_detail_table() -> Table:
-    table = Table(show_header=False, box=None, pad_edge=False)
-    table.add_column("Field", style="bold", no_wrap=True)
-    table.add_column("Value", overflow="fold")
-    return table
+    return create_key_value_table(())
 
 
 def _format_center_frequency(center_frequency_khz: int) -> str:
-    frequency_mhz = center_frequency_khz / 1_000
-    if frequency_mhz >= 1_000:
-        return f"{frequency_mhz:,.3f} MHz ({frequency_mhz / 1_000:.3f} GHz)"
-    return f"{frequency_mhz:,.3f} MHz"
+    return format_frequency(center_frequency_khz)
 
 
 def _format_optional_boolean(value: bool | None) -> str:
-    if value is None:
-        return "Unknown"
-    return "Yes" if value else "No"
+    return format_bool(value)
 
 
 def _create_nearby_wifi_table(networks: tuple[WifiNetwork, ...], terminal_width: int) -> Table:
-    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
-    table.add_column("SSID", overflow="fold")
-    table.add_column("BSS", justify="right", no_wrap=True)
-    table.add_column("Signal", justify="right", no_wrap=True)
-    table.add_column("Band", no_wrap=True)
-    compact = terminal_width < 100
-    if not compact:
-        table.add_column("Security", overflow="fold")
-        table.add_column("Interface", overflow="fold")
-    for network in networks:
+    mode = layout_mode(terminal_width)
+    columns: list[tuple[str, dict[str, object]]] = [
+        ("Idx", {"justify": "right", "no_wrap": True}),
+        ("SSID", {"overflow": "fold"}),
+        ("Signal", {"justify": "right", "no_wrap": True}),
+        ("Band", {"no_wrap": True}),
+        ("BSS", {"justify": "right", "no_wrap": True}),
+    ]
+    if mode is not LayoutMode.COMPACT:
+        columns.extend(
+            (
+                ("Channels", {"overflow": "fold"}),
+                ("Security", {"overflow": "fold"}),
+            )
+        )
+    if mode is LayoutMode.WIDE:
+        columns.extend(
+            (
+                ("PHY", {"overflow": "fold"}),
+                ("Interface", {"overflow": "fold"}),
+            )
+        )
+    table = create_data_table(tuple(columns))
+    for index, network in enumerate(networks, start=1):
         observed_count = len(network.access_points)
         bss_count = observed_count or network.reported_bss_count
         bands = "/".join(band.value for band in network.bands) or "Unknown"
@@ -1134,13 +1176,27 @@ def _create_nearby_wifi_table(networks: tuple[WifiNetwork, ...], terminal_width:
         else:
             security = "Open"
         row: list[str | Text] = [
+            str(index),
             Text(network.ssid.display_text or "<Hidden>"),
-            str(bss_count),
             f"{network.best_signal_quality}%",
             bands,
+            str(bss_count),
         ]
-        if not compact:
-            row.extend((security, Text(network.interface_description)))
+        if mode is not LayoutMode.COMPACT:
+            channels = sorted(
+                {item.channel for item in network.access_points if item.channel is not None}
+            )
+            row.extend((", ".join(map(str, channels)) or "Unknown", security))
+        if mode is LayoutMode.WIDE:
+            phy_types = network.supported_phy_types or tuple(
+                dict.fromkeys(item.phy_type for item in network.access_points)
+            )
+            row.extend(
+                (
+                    ", ".join(item.display_name for item in phy_types) or "Unknown",
+                    Text(network.interface_description),
+                )
+            )
         table.add_row(*row)
     return table
 
@@ -1156,8 +1212,7 @@ def _inspect_current_network(
         error_console.print("[bold red]Current network unavailable:[/bold red]", Text(f" {error}"))
         return 1
 
-    console.print(f"[bold]{PROJECT_NAME}[/bold]")
-    console.print("Current Network", style="dim")
+    _print_command_header(console, "Current Network")
     relevant = _relevant_network_contexts(snapshot)
     if not relevant:
         console.print("No usable IP configuration or default route was reported by Windows.")
@@ -1191,9 +1246,7 @@ def _create_network_context_table(
     context: InterfaceNetworkContext,
     default_routes: tuple[Route, ...],
 ) -> Table:
-    table = Table(show_header=False, box=None, pad_edge=False)
-    table.add_column("Field", style="bold", no_wrap=True)
-    table.add_column("Value", overflow="fold")
+    table = create_key_value_table(())
     name = (
         context.network_interface.friendly_name
         if context.network_interface is not None

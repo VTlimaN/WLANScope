@@ -184,11 +184,11 @@ def test_adapters_compact_width_keeps_essential_columns() -> None:
         console=_console(output, 80),
     )
 
-    header = next(line for line in output.getvalue().splitlines() if "Index" in line)
+    header = next(line for line in output.getvalue().splitlines() if "Idx" in line)
     assert exit_code == 0
     assert "Name" in header
     assert "MAC" not in header
-    assert "Link" not in header
+    assert "Speed" not in header
     assert max(map(len, output.getvalue().splitlines())) <= 80
 
 

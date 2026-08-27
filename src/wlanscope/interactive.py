@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
-from rich.console import Console
+from rich.console import Console, RenderableType
 from rich.table import Table
 from rich.text import Text
 
@@ -39,11 +39,22 @@ from wlanscope.domain.interfaces import InterfaceCollectionError, NetworkInterfa
 from wlanscope.domain.nearby_wifi import NearbyWifiSnapshot, WifiAccessPoint, WifiNetwork
 from wlanscope.domain.network import (
     CurrentNetworkSnapshot,
-    InterfaceNetworkContext,
     NetworkCollectionError,
-    Route,
 )
 from wlanscope.domain.wifi import CurrentWifiSnapshot, WifiCollectionError, WifiInterfaceSnapshot
+from wlanscope.presentation import (
+    create_data_table,
+    create_empty_state,
+    create_key_value_table,
+    create_main_menu,
+    create_notice,
+    create_screen_header,
+    format_bool,
+    format_bytes,
+    format_rate,
+    format_timestamp,
+    navigation_text,
+)
 from wlanscope.reporting.writer import ReportWriteError
 from wlanscope.version import __version__
 
@@ -67,18 +78,17 @@ class InteractiveUseCases:
 class InteractiveRenderers:
     interface_table: Callable[[tuple[NetworkInterface, ...], int], Table]
     wifi_table: Callable[[WifiInterfaceSnapshot], Table]
-    relevant_network_contexts: Callable[
-        [CurrentNetworkSnapshot], tuple[InterfaceNetworkContext, ...]
-    ]
-    network_context_table: Callable[[InterfaceNetworkContext, tuple[Route, ...]], Table]
     nearby_table: Callable[[tuple[WifiNetwork, ...], int], Table]
     nearby_details: Callable[[NearbyWifiNetworkDetails, WifiAccessPoint | None, Console], None]
     access_point_detail: Callable[[WifiAccessPoint], Table]
     device_table: Callable[[EnrichedDeviceInventory, int], Table]
     device_summary: Callable[[EnrichedDeviceInventory, Console], None]
-    full_overview: Callable[[FullNetworkSnapshot], Table]
-    full_sections: Callable[[FullNetworkSnapshot], Table]
-    full_summary: Callable[[FullNetworkSnapshot], Table]
+    current_overview: Callable[
+        [CurrentWifiSnapshot | None, CurrentNetworkSnapshot | None, int], RenderableType
+    ]
+    full_overview: Callable[[FullNetworkSnapshot], RenderableType]
+    full_sections: Callable[[FullNetworkSnapshot], RenderableType]
+    full_summary: Callable[[FullNetworkSnapshot, int], RenderableType]
 
 
 class InteractiveSession:
@@ -89,19 +99,23 @@ class InteractiveSession:
         console: Console,
         error_console: Console,
         input_reader: InputReader,
+        clear_enabled: bool | None = None,
     ) -> None:
         self._use_cases = use_cases
         self._renderers = renderers
         self._console = console
         self._error_console = error_console
         self._input = input_reader
+        self._clear_enabled = console.is_terminal and (
+            True if clear_enabled is None else clear_enabled
+        )
 
     def run(self) -> int:
         try:
             while True:
                 self._render_main_menu()
                 choice = self._read("Select an option: ")
-                if choice == "0":
+                if choice.casefold() in {"0", "q"}:
                     return 0
                 action = {
                     "1": self._current_network,
@@ -123,20 +137,28 @@ class InteractiveSession:
             return 130
 
     def _render_main_menu(self) -> None:
-        self._console.print("[bold]WLANScope[/bold]")
-        self._console.print("Windows Wireless & Network Reconnaissance", style="dim")
-        self._console.print("1. Current Network")
-        self._console.print("2. Network Interfaces")
-        self._console.print("3. Nearby Wi-Fi Networks")
-        self._console.print("4. Observed Devices")
-        self._console.print("5. Full Network Scan")
-        self._console.print("6. Reports")
-        self._console.print("7. About")
-        self._console.print("0. Exit")
+        self._clear()
+        self._console.print(
+            create_screen_header(
+                "Windows Wireless & Network Reconnaissance",
+                "Local network visibility and wireless inspection",
+            )
+        )
+        self._console.print(create_main_menu(self._console.width))
+        self._console.print(navigation_text(("0", "Exit"), ("Q", "Exit")))
+        self._console.print("sasser", style="dim")
+
+    def _clear(self) -> None:
+        if self._clear_enabled:
+            self._console.clear()
+
+    def _begin_screen(self, title: str, subtitle: str | None = None) -> None:
+        self._clear()
+        self._console.print(create_screen_header(title, subtitle))
 
     def _current_network(self) -> None:
         while True:
-            self._console.print("Current Network", style="bold")
+            self._begin_screen("Current Network", "Connection and local IP context")
             wifi = None
             network = None
             network_interfaces: tuple[NetworkInterface, ...] = ()
@@ -163,15 +185,15 @@ class InteractiveSession:
                 self._console.print("4. Routes")
                 self._console.print("5. DNS / DHCP")
                 self._console.print("6. Adapter")
-                self._console.print("7. Wi-Fi Capabilities / Statistics")
-                self._console.print("R. Refresh")
-                self._console.print("0. Back")
-                choice = self._read("Select an option: ").casefold()
-                if choice == "0":
+                self._console.print("7. Wi-Fi Technical")
+                self._console.print(navigation_text(("R", "Refresh"), ("0", "Back"), ("B", "Back")))
+                choice = self._read("Select option: ").casefold()
+                if choice in {"0", "b"}:
                     return
                 if choice == "r":
                     break
                 if choice == "1":
+                    self._begin_screen("Current Network", "Overview")
                     self._render_current_overview(wifi, network)
                 elif choice == "2":
                     self._render_current_wifi_details(wifi, include_connection=True)
@@ -187,33 +209,27 @@ class InteractiveSession:
                     self._render_current_wifi_details(wifi, include_connection=False)
                 else:
                     self._invalid_selection()
+                    continue
+                self._wait_for_back()
+                self._begin_screen("Current Network", "Connection and local IP context")
+                self._render_current_overview(wifi, network)
 
     def _render_current_overview(
         self,
         wifi: CurrentWifiSnapshot | None,
         network: CurrentNetworkSnapshot | None,
     ) -> None:
+        self._console.print(self._renderers.current_overview(wifi, network, self._console.width))
         if wifi is not None:
-            for interface in wifi.interfaces:
-                self._console.print(self._renderers.wifi_table(interface))
-            if not wifi.interfaces:
-                self._console.print("Current Wi-Fi: Unavailable")
             self._render_messages(tuple(issue.message for issue in wifi.issues))
         if network is not None:
-            relevant = self._renderers.relevant_network_contexts(network)
-            for context in relevant:
-                self._console.print(
-                    self._renderers.network_context_table(context, network.default_routes)
-                )
-            if not relevant:
-                self._console.print("IP and routing context: Unavailable")
             self._render_messages(tuple(issue.message for issue in network.issues))
 
     def _render_current_wifi_details(
         self, wifi: CurrentWifiSnapshot | None, include_connection: bool
     ) -> None:
-        title = "Wi-Fi Connection" if include_connection else "Wi-Fi Capabilities / Statistics"
-        self._console.print(title, style="bold")
+        title = "Wi-Fi Connection" if include_connection else "Wi-Fi Technical"
+        self._begin_screen(title)
         if wifi is None or not wifi.interfaces:
             self._console.print("Unavailable")
             return
@@ -221,64 +237,98 @@ class InteractiveSession:
             self._console.print(self._renderers.wifi_table(interface))
 
     def _render_current_ip_addresses(self, network: CurrentNetworkSnapshot | None) -> None:
-        self._console.print("IP Addresses", style="bold")
-        table = Table(show_header=True, box=None, pad_edge=False)
-        for heading in ("Address", "Network", "Classification", "Origin", "DAD", "Lifetimes"):
-            table.add_column(heading, overflow="fold")
+        self._begin_screen("IP Addresses")
+        wide = self._console.width >= 140
+        columns: list[tuple[str, dict[str, object]]] = [
+            ("Address", {"no_wrap": True}),
+            ("Family", {"no_wrap": True}),
+            ("Network", {"overflow": "fold"}),
+            ("Class", {"overflow": "fold"}),
+            ("Origin", {"overflow": "fold"}),
+            ("State", {"no_wrap": True}),
+        ]
+        if wide:
+            columns.extend(
+                (
+                    ("Preferred", {"no_wrap": True}),
+                    ("Valid", {"no_wrap": True}),
+                    ("Skip source", {"no_wrap": True}),
+                )
+            )
+        table = create_data_table(tuple(columns))
         assignments = (
             tuple(item for context in network.interfaces for item in context.addresses)
             if network is not None
             else ()
         )
         for item in assignments:
-            table.add_row(
+            row = [
                 f"{item.address}/{item.prefix_length}",
+                f"IPv{item.address.version}",
                 str(item.network),
                 ", ".join(item.classifications) or "Unknown",
                 f"{item.prefix_origin.display_name} / {item.address_origin.display_name}",
                 item.dad_state.display_name,
-                f"preferred {_optional_counter(item.preferred_lifetime_seconds)}; "
-                f"valid {_optional_counter(item.valid_lifetime_seconds)}; "
-                f"skip-as-source {'Yes' if item.skip_as_source else 'No'}",
-            )
-        self._console.print(table if assignments else "Unavailable")
+            ]
+            if wide:
+                row.extend(
+                    (
+                        _optional_counter(item.preferred_lifetime_seconds),
+                        _optional_counter(item.valid_lifetime_seconds),
+                        format_bool(item.skip_as_source),
+                    )
+                )
+            table.add_row(*row)
+        self._console.print(
+            table if assignments else create_empty_state("No IP addresses available.")
+        )
 
     def _render_current_routes(self, network: CurrentNetworkSnapshot | None) -> None:
-        self._console.print("Routes", style="bold")
-        table = Table(show_header=True, box=None, pad_edge=False)
-        for heading in ("Destination", "Next hop", "Interface", "Metrics", "Protocol", "Flags"):
-            table.add_column(heading, overflow="fold")
+        self._begin_screen("Routes")
+        wide = self._console.width >= 140
+        columns: list[tuple[str, dict[str, object]]] = [
+            ("Destination", {"no_wrap": True}),
+            ("Next hop", {"no_wrap": True}),
+            ("Interface", {"no_wrap": True}),
+            ("Metric", {"no_wrap": True}),
+            ("Type", {"no_wrap": True}),
+        ]
+        if wide:
+            columns.extend(
+                (
+                    ("Protocol", {"no_wrap": True}),
+                    ("Origin", {"no_wrap": True}),
+                    ("Effective", {"no_wrap": True}),
+                )
+            )
+        table = create_data_table(tuple(columns))
         routes = network.routes if network is not None else ()
         for route in routes:
-            table.add_row(
+            row = [
                 str(route.destination),
                 str(route.next_hop),
                 str(route.interface_index),
-                f"route {route.route_metric}; "
-                f"interface {_optional_counter(route.interface_metric)}; "
-                f"effective {_optional_counter(route.effective_metric)}",
-                f"{route.protocol.display_name} / {route.origin.display_name}",
-                ", ".join(
-                    label
-                    for present, label in (
-                        (route.is_default, "Default"),
-                        (route.is_on_link, "On-link"),
+                str(route.route_metric),
+                "Default" if route.is_default else "On-link" if route.is_on_link else "Route",
+            ]
+            if wide:
+                row.extend(
+                    (
+                        route.protocol.display_name,
+                        route.origin.display_name,
+                        _optional_counter(route.effective_metric),
                     )
-                    if present
                 )
-                or "None",
-            )
-        self._console.print(table if routes else "Unavailable")
+            table.add_row(*row)
+        self._console.print(table if routes else create_empty_state("No routes available."))
 
     def _render_current_dns_dhcp(self, network: CurrentNetworkSnapshot | None) -> None:
-        self._console.print("DNS / DHCP", style="bold")
+        self._begin_screen("DNS / DHCP")
         if network is None:
-            self._console.print("Unavailable")
+            self._console.print(create_empty_state("DNS and DHCP configuration unavailable."))
             return
         for context in network.interfaces:
-            table = Table(show_header=False, box=None, pad_edge=False)
-            table.add_column("Field", style="bold", no_wrap=True)
-            table.add_column("Value", overflow="fold")
+            table = create_key_value_table(())
             table.add_row("Interface", str(context.interface_index))
             if context.dns is None:
                 table.add_row("DNS", "Unavailable")
@@ -303,29 +353,25 @@ class InteractiveSession:
             )
             table.add_row(
                 "Lease obtained",
-                context.dhcp.lease_obtained.isoformat()
-                if context.dhcp.lease_obtained
-                else "Unavailable",
+                format_timestamp(context.dhcp.lease_obtained),
             )
             table.add_row(
                 "Lease expires",
-                context.dhcp.lease_expires.isoformat()
-                if context.dhcp.lease_expires
-                else "Unavailable",
+                format_timestamp(context.dhcp.lease_expires),
             )
             self._console.print(table)
 
     def _render_current_adapters(self, interfaces: tuple[NetworkInterface, ...]) -> None:
-        self._console.print("Adapter", style="bold")
+        self._begin_screen("Adapter")
         if not interfaces:
-            self._console.print("Unavailable")
+            self._console.print(create_empty_state("Adapter details unavailable."))
             return
         self._console.print(self._renderers.interface_table(interfaces, self._console.width))
 
     def _interfaces(self) -> None:
         inventory = None
         while True:
-            self._console.print("Network Interfaces", style="bold")
+            self._begin_screen("Network Interfaces", "Windows adapter inventory")
             if inventory is None:
                 try:
                     inventory = self._use_cases.interfaces.execute()
@@ -341,10 +387,9 @@ class InteractiveSession:
             else:
                 self._console.print("No network interfaces were reported by Windows.")
             self._render_messages(inventory.warnings)
-            self._console.print("R. Refresh")
-            self._console.print("0. Back")
-            choice = self._read("Select an interface or action: ").casefold()
-            if choice == "0":
+            self._console.print(navigation_text(("R", "Refresh"), ("0", "Back"), ("B", "Back")))
+            choice = self._read("Select interface: ").casefold()
+            if choice in {"0", "b"}:
                 return
             if choice == "r":
                 inventory = None
@@ -354,75 +399,92 @@ class InteractiveSession:
                 self._interface_detail(inventory.interfaces[index])
 
     def _interface_detail(self, interface: NetworkInterface) -> None:
-        self._console.print("Interface Details", style="bold")
-        table = Table(show_header=False, box=None, pad_edge=False)
-        table.add_column("Field", style="bold", no_wrap=True)
-        table.add_column("Value", overflow="fold")
-        rows: tuple[tuple[str, str | Text], ...] = (
-            ("Name", Text(interface.friendly_name)),
-            ("Alias", Text(interface.alias)),
-            ("Description", Text(interface.description or "Unavailable")),
-            ("Kind", interface.kind.value),
-            ("Operational state", interface.operational_state.value),
-            ("Administrative state", interface.administrative_state.value),
-            ("Media state", interface.media_state.value),
-            ("Interface index", str(interface.interface_index)),
-            ("Identifier", Text(interface.stable_id)),
-            ("Windows type", str(interface.windows_interface_type)),
-            ("MAC", str(interface.mac_address) if interface.mac_address else "Unavailable"),
-            ("MTU", str(interface.mtu) if interface.mtu is not None else "Unavailable"),
-            ("Receive link", _format_bits_per_second(interface.receive_link_speed_bps)),
-            ("Transmit link", _format_bits_per_second(interface.transmit_link_speed_bps)),
-            ("Manufacturer", Text(interface.manufacturer or "Unavailable")),
-            ("Driver", Text(interface.driver_description or "Unavailable")),
-            ("Driver version", Text(interface.driver_version or "Unavailable")),
-            ("Hardware", _optional_boolean(interface.is_hardware)),
-            ("Virtual", _optional_boolean(interface.is_virtual)),
-            ("Hidden", _optional_boolean(interface.is_hidden)),
+        self._begin_screen("Interface Details", interface.friendly_name)
+        self._console.print("Identity / State / Link", style="bold")
+        self._console.print(
+            create_key_value_table(
+                (
+                    ("Name", Text(interface.friendly_name)),
+                    ("Alias", Text(interface.alias)),
+                    ("Description", Text(interface.description or "Unavailable")),
+                    ("Kind", interface.kind.value),
+                    ("Operational state", interface.operational_state.value),
+                    ("Administrative state", interface.administrative_state.value),
+                    ("Media state", interface.media_state.value),
+                    ("Interface index", str(interface.interface_index)),
+                    ("Identifier", Text(interface.stable_id)),
+                    ("Windows type", str(interface.windows_interface_type)),
+                    ("MAC", str(interface.mac_address) if interface.mac_address else "Unavailable"),
+                    ("MTU", str(interface.mtu) if interface.mtu is not None else "Unavailable"),
+                    ("Receive link", format_rate(interface.receive_link_speed_bps)),
+                    ("Transmit link", format_rate(interface.transmit_link_speed_bps)),
+                )
+            )
         )
-        for label, value in rows:
-            table.add_row(label, value)
         if interface.statistics is not None:
             statistics = interface.statistics
-            table.add_row("Statistics source", statistics.provenance)
-            table.add_row("Received bytes", _optional_counter(statistics.received_bytes))
-            table.add_row("Sent bytes", _optional_counter(statistics.sent_bytes))
-            table.add_row(
-                "Received unicast packets", _optional_counter(statistics.received_unicast_packets)
+            self._console.print("Statistics", style="bold")
+            self._console.print(
+                create_key_value_table(
+                    (
+                        ("Source", statistics.provenance),
+                        (
+                            "Received bytes",
+                            format_bytes(
+                                statistics.received_bytes,
+                                include_exact=self._console.width >= 140,
+                            ),
+                        ),
+                        (
+                            "Sent bytes",
+                            format_bytes(
+                                statistics.sent_bytes,
+                                include_exact=self._console.width >= 140,
+                            ),
+                        ),
+                        ("Received errors", _optional_counter(statistics.received_errors)),
+                        ("Outbound errors", _optional_counter(statistics.outbound_errors)),
+                        ("Received discards", _optional_counter(statistics.received_discards)),
+                        ("Outbound discards", _optional_counter(statistics.outbound_discards)),
+                    )
+                )
             )
-            table.add_row(
-                "Sent unicast packets", _optional_counter(statistics.sent_unicast_packets)
+        else:
+            self._console.print(create_empty_state("Adapter statistics unavailable."))
+        hardware = interface.hardware
+        self._console.print("Driver / Hardware", style="bold")
+        self._console.print(
+            create_key_value_table(
+                (
+                    ("Manufacturer", Text(interface.manufacturer or "Unavailable")),
+                    ("Driver", Text(interface.driver_description or "Unavailable")),
+                    ("Driver version", Text(interface.driver_version or "Unavailable")),
+                    ("Hardware", _optional_boolean(interface.is_hardware)),
+                    ("Virtual", _optional_boolean(interface.is_virtual)),
+                    ("Hidden", _optional_boolean(interface.is_hidden)),
+                    (
+                        "Connector present",
+                        _optional_boolean(hardware.connector_present)
+                        if hardware
+                        else "Unavailable",
+                    ),
+                    (
+                        "Driver date",
+                        Text(hardware.driver_date or "Unavailable") if hardware else "Unavailable",
+                    ),
+                    (
+                        "Device identifier",
+                        Text(hardware.device_id or "Unavailable") if hardware else "Unavailable",
+                    ),
+                )
             )
-            table.add_row(
-                "Received multicast packets",
-                _optional_counter(statistics.received_multicast_packets),
-            )
-            table.add_row(
-                "Sent multicast packets", _optional_counter(statistics.sent_multicast_packets)
-            )
-            table.add_row(
-                "Received broadcast packets",
-                _optional_counter(statistics.received_broadcast_packets),
-            )
-            table.add_row(
-                "Sent broadcast packets", _optional_counter(statistics.sent_broadcast_packets)
-            )
-            table.add_row("Received discards", _optional_counter(statistics.received_discards))
-            table.add_row("Outbound discards", _optional_counter(statistics.outbound_discards))
-            table.add_row("Received errors", _optional_counter(statistics.received_errors))
-            table.add_row("Outbound errors", _optional_counter(statistics.outbound_errors))
-        if interface.hardware is not None:
-            table.add_row(
-                "Connector present", _optional_boolean(interface.hardware.connector_present)
-            )
-            table.add_row("Driver date", Text(interface.hardware.driver_date or "Unavailable"))
-            table.add_row("Device identifier", Text(interface.hardware.device_id or "Unavailable"))
-        self._console.print(table)
+        )
         self._wait_for_back()
 
     def _nearby_wifi(self) -> None:
         snapshot: NearbyWifiSnapshot | None = None
         while True:
+            self._begin_screen("Nearby Wi-Fi Networks", "Observational wireless environment")
             if snapshot is None:
                 try:
                     snapshot = self._use_cases.nearby_wifi.execute()
@@ -431,18 +493,16 @@ class InteractiveSession:
                     if self._refresh_or_back() == "0":
                         return
                     continue
-            self._console.print("Nearby Wi-Fi Networks", style="bold")
             if snapshot.networks:
                 self._console.print(
                     self._renderers.nearby_table(snapshot.networks, self._console.width)
                 )
             else:
-                self._console.print("No nearby Wi-Fi networks were reported by Windows.")
+                self._console.print(create_empty_state("No nearby networks observed."))
             self._render_messages(tuple(issue.message for issue in snapshot.issues))
-            self._console.print("R. Refresh")
-            self._console.print("0. Back")
-            choice = self._read("Select a network or action: ").casefold()
-            if choice == "0":
+            self._console.print(navigation_text(("R", "Refresh"), ("0", "Back"), ("B", "Back")))
+            choice = self._read("Select network: ").casefold()
+            if choice in {"0", "b"}:
                 return
             if choice == "r":
                 snapshot = None
@@ -460,10 +520,11 @@ class InteractiveSession:
             self._operation_unavailable("Network details", error)
             return
         while True:
+            self._begin_screen("Nearby Network Detail")
             self._renderers.nearby_details(details, None, self._console)
-            self._console.print("0. Back")
-            choice = self._read("Select an access point or action: ")
-            if choice == "0":
+            self._console.print(navigation_text(("0", "Back"), ("B", "Back")))
+            choice = self._read("Select access point: ").casefold()
+            if choice in {"0", "b"}:
                 return
             index = self._one_based_index(choice, len(details.network.access_points))
             if index is None:
@@ -475,7 +536,7 @@ class InteractiveSession:
             except WifiSelectionError as error:
                 self._operation_unavailable("Access point details", error)
                 continue
-            self._console.print("Access Point Details", style="bold")
+            self._begin_screen("Access Point Details")
             self._console.print(self._renderers.access_point_detail(access_point))
             self._wait_for_back()
 
@@ -515,17 +576,19 @@ class InteractiveSession:
                 refresh = False
             if enriched is None:
                 return
-            self._console.print("Observed Devices", style="bold")
-            self._console.print(self._renderers.device_table(enriched, self._console.width))
+            self._begin_screen("Observed Devices", "Local snapshot and role evidence")
+            if enriched.hosts:
+                self._console.print(self._renderers.device_table(enriched, self._console.width))
+            else:
+                self._console.print(create_empty_state("No devices observed."))
             self._renderers.device_summary(enriched, self._console)
             self._render_messages(
                 tuple(issue.message for issue in enriched.discovered.issues)
                 + tuple(issue.message for issue in enriched.issues)
             )
-            self._console.print("R. Refresh")
-            self._console.print("0. Back")
-            choice = self._read("Select a device or action: ").casefold()
-            if choice == "0":
+            self._console.print(navigation_text(("R", "Refresh"), ("0", "Back"), ("B", "Back")))
+            choice = self._read("Select device: ").casefold()
+            if choice in {"0", "b"}:
                 return
             if choice == "r":
                 refresh = True
@@ -535,13 +598,13 @@ class InteractiveSession:
                 self._device_detail(enriched.hosts[index])
 
     def _device_detail(self, host: EnrichedHost) -> None:
+        self._begin_screen("Device Details")
         discovered = host.discovered
         sources = ", ".join(
             source.value for source in sorted(discovered.sources, key=lambda item: item.value)
         )
-        table = Table(show_header=False, box=None, pad_edge=False)
-        table.add_column("Field", style="bold", no_wrap=True)
-        table.add_column("Value", overflow="fold")
+        table = create_key_value_table(())
+        table.add_row("Identity / Address", "")
         table.add_row("IP", str(discovered.address))
         table.add_row("Address family", discovered.address_family)
         table.add_row(
@@ -560,6 +623,8 @@ class InteractiveSession:
                 else None
             ),
         )
+        table.add_section()
+        table.add_row("Name Resolution / Vendor", "")
         table.add_row("Hostname", Text(_hostname_display(host)))
         table.add_row("Hostname state", host.hostname.state.value)
         table.add_row(
@@ -570,6 +635,8 @@ class InteractiveSession:
         table.add_row(
             "Vendor source", host.vendor.source.value if host.vendor.source else "Unavailable"
         )
+        table.add_section()
+        table.add_row("Observation / Neighbor", "")
         table.add_row("Reachability", discovered.reachability.value)
         table.add_row(
             "Neighbor state",
@@ -584,6 +651,8 @@ class InteractiveSession:
                 source.value for source in sorted(discovered.sources, key=lambda item: item.value)
             ),
         )
+        table.add_section()
+        table.add_row("Role Evidence / Provenance", "")
         table.add_row("Self evidence", _yes_no(DiscoverySource.SELF in discovered.sources))
         table.add_row("Gateway evidence", _yes_no(DiscoverySource.GATEWAY in discovered.sources))
         table.add_row("Neighbor router indication", _yes_no(discovered.is_router))
@@ -600,7 +669,6 @@ class InteractiveSession:
             )
             or "None reported",
         )
-        self._console.print("Device Details", style="bold")
         self._console.print(table)
         self._wait_for_back()
 
@@ -612,9 +680,9 @@ class InteractiveSession:
             while True:
                 self._console.print("1. Refresh")
                 self._console.print("2. Run with large-range authorization")
-                self._console.print("0. Back")
-                choice = self._read("Select an option: ")
-                if choice == "0":
+                self._console.print(navigation_text(("0", "Back"), ("B", "Back")))
+                choice = self._read("Select option: ").casefold()
+                if choice in {"0", "b"}:
                     return
                 if choice == "1":
                     break
@@ -624,21 +692,21 @@ class InteractiveSession:
                 self._invalid_selection()
 
     def _render_full_scan(self, snapshot: FullNetworkSnapshot) -> None:
-        self._console.print("Full Network Scan", style="bold")
+        self._begin_screen("Full Network Scan", "Point-in-time multi-source summary")
         self._console.print(self._renderers.full_overview(snapshot))
         self._console.print(self._renderers.full_sections(snapshot))
-        self._console.print(self._renderers.full_summary(snapshot))
+        self._console.print(self._renderers.full_summary(snapshot, self._console.width))
         self._render_messages(tuple(issue.message for issue in snapshot.issues))
 
     def _reports(self) -> None:
         while True:
-            self._console.print("Reports", style="bold")
-            self._console.print("1. Run Full Scan and Export JSON")
-            self._console.print("2. Run Full Scan and Export Markdown")
-            self._console.print("3. Run Full Scan and Export JSON + Markdown")
-            self._console.print("0. Back")
-            choice = self._read("Select an option: ")
-            if choice == "0":
+            self._begin_screen("Reports", "Export the current full-scan model")
+            self._console.print("1. JSON")
+            self._console.print("2. Markdown")
+            self._console.print("3. JSON + Markdown")
+            self._console.print(navigation_text(("0", "Back"), ("B", "Back")))
+            choice = self._read("Select option: ").casefold()
+            if choice in {"0", "b"}:
                 return
             if choice not in {"1", "2", "3"}:
                 self._invalid_selection()
@@ -676,7 +744,7 @@ class InteractiveSession:
             self._console.print("1. Overwrite")
             self._console.print("0. Cancel")
             while True:
-                overwrite_choice = self._read("Select an option: ")
+                overwrite_choice = self._read("Select option: ")
                 if overwrite_choice == "0":
                     return
                 if overwrite_choice == "1":
@@ -690,32 +758,54 @@ class InteractiveSession:
         except ReportPathError as error:
             self._operation_unavailable("Report export", error)
             return
-        self._console.print("Reports written", style="bold")
+        self._console.print(create_notice("Success", "Report written"))
+        self._console.print(
+            create_key_value_table(
+                (
+                    ("Format", ", ".join(exported.format.value for exported in exports)),
+                    ("Snapshot status", snapshot.status.value),
+                )
+            )
+        )
         for exported in exports:
             self._console.print(
-                Text.assemble(f"{exported.format.value}: ", Text(str(exported.path)))
+                Text.assemble(f"Path ({exported.format.value}): ", Text(str(exported.path)))
             )
 
     def _about(self) -> None:
-        self._console.print("WLANScope", style="bold")
-        self._console.print("Windows Wireless & Network Reconnaissance")
-        self._console.print("Author: sasser")
-        self._console.print(f"Version: {__version__}")
-        self._console.print("Purpose: Read-only Windows wireless and local network visibility.")
+        self._begin_screen("About", "Windows Wireless & Network Reconnaissance")
+        self._console.print(
+            create_key_value_table(
+                (
+                    ("Version", __version__),
+                    ("Author", "sasser"),
+                    ("Purpose", "Read-only Windows wireless and local network visibility"),
+                )
+            )
+        )
+        self._console.print("Capabilities", style="bold")
+        self._console.print("Current network inspection")
+        self._console.print("Nearby Wi-Fi observation")
+        self._console.print("Local device discovery")
+        self._console.print("Deep network reporting")
+        self._console.print("Security model", style="bold")
+        self._console.print("Read-only; no credential extraction; no network mutation")
         self._wait_for_back()
 
     def _refresh_or_back(self) -> str:
         self._console.print("1. Refresh")
-        self._console.print("0. Back")
+        self._console.print(navigation_text(("0", "Back"), ("B", "Back")))
         while True:
-            choice = self._read("Select an option: ")
-            if choice in {"0", "1"}:
-                return choice
+            choice = self._read("Select option: ").casefold()
+            if choice in {"0", "b"}:
+                return "0"
+            if choice == "1":
+                return "1"
             self._invalid_selection()
 
     def _wait_for_back(self) -> None:
-        self._console.print("0. Back")
-        while self._read("Select an option: ") != "0":
+        self._console.print(navigation_text(("0", "Back"), ("B", "Back")))
+        while self._read("Select option: ").casefold() not in {"0", "b"}:
             self._invalid_selection()
 
     def _path_input(self, prompt: str) -> Path | None:
@@ -743,11 +833,12 @@ class InteractiveSession:
         self._error_console.print("[yellow]Invalid selection.[/yellow]")
 
     def _operation_unavailable(self, label: str, error: Exception) -> None:
-        self._error_console.print(Text(f"{label} unavailable: {error}"))
+        self._error_console.print(create_notice("Unavailable", error, label))
 
     def _render_messages(self, messages: tuple[str, ...]) -> None:
-        for message in messages:
-            self._error_console.print(Text.assemble(("Warning: ", "yellow"), Text(message)))
+        unique = tuple(dict.fromkeys(messages))
+        if unique:
+            self._error_console.print(create_notice("Partial", "\n".join(unique)))
 
 
 def _optional_boolean(value: bool | None) -> str:

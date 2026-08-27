@@ -49,7 +49,7 @@ python -m venv .venv
 
 Available behavior:
 
-- `wlanscope` opens the interactive terminal experience when both input and output are attached to a terminal. The main menu provides current network, interface, nearby Wi-Fi, observed-device, full-scan, report, and About workflows.
+- `wlanscope` opens the interactive terminal experience when both input and output are attached to a terminal. The restrained Rich presentation provides consistent headers, status text, navigation, current-network details, interface and Wi-Fi inspection, observed devices, full scan, reports, and About workflows.
 - `--help` displays the supported command surface;
 - `--version` displays package metadata versioning;
 - `adapters` lists interfaces reported by Windows, with structured IP Helper data and optional PowerShell enrichment.
@@ -68,7 +68,7 @@ Available behavior:
 
 Every command provides focused help through `wlanscope COMMAND --help`; use `wlanscope wifi scan --help` for the nested Wi-Fi scan options. Normal results are written to standard output, while usage errors, operational failures, cancellation notices, and partial-result warnings use standard error. Redirected output is deterministic and does not prompt, animate progress, or require ANSI color support.
 
-Interactive screens keep one snapshot while the user opens details or returns within that screen. Refresh is always explicit and performs a new collection only for the selected workflow. When stdin or stdout is redirected, the root command prints help and exits without reading input; scripts and automation should continue to use explicit subcommands.
+Interactive screens adapt their tables and summaries for compact, standard, and wide terminals. They keep one snapshot while the user opens details or returns within that screen; `B` and `0` return, `R` refreshes where supported, and `Q` or `0` exits at the root. Refresh is always explicit and performs a new collection only for the selected workflow. Screen clearing occurs only in an interactive terminal. When stdin or stdout is redirected, the root command prints help and exits without reading input, clearing the screen, or emitting ANSI styling; scripts and automation should continue to use explicit subcommands.
 
 CLI exit codes are consistent across commands:
 
@@ -126,8 +126,8 @@ The standard test suite is offline and does not require Wi-Fi hardware, network 
 - M9: JSON and Markdown reporting, implemented
 - M10: CLI polish and reliability, implemented
 - M10.5: interactive terminal experience, implemented
-- M10.6: data completeness and deep inspection, in development
-- M10.7: CLI visual design and final UX
+- M10.6: data completeness and deep inspection, implemented
+- M10.7: CLI visual design and final UX, implemented
 - M11: documentation and portfolio preparation
 - M12: v1.0.0 release
 
