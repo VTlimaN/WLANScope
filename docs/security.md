@@ -18,6 +18,8 @@ Nearby Wi-Fi discovery is passive, read-only observation after a Windows-managed
 
 Beacon and probe-response information elements are attacker-controlled input. WLANScope copies them only after validating the native BSS buffer bounds, caps their size, parses them without recursion or execution, tolerates malformed elements, and persists only selected interpreted metadata rather than full raw blobs.
 
+WPS handling is passive metadata parsing of advertised vendor Information Elements. It reports factual configuration fields when present and does not retrieve or guess a PIN, generate attack commands, invoke WPS tooling, or label an AP vulnerable merely because WPS is observed.
+
 Current network analysis is read-only. WLANScope does not create or remove addresses or routes, change metrics or DNS servers, renew DHCP leases, or modify adapter configuration.
 
 Optional deep inspection uses only local Native WLAN, IP Helper, NetAdapter, NetConnectionProfile, and CIM data. It performs no public-IP, ISP, geolocation, WHOIS, telemetry, or other external lookup. Adapter statistics are read in batch and no command changes radio, adapter, profile, or advanced-property state.
@@ -57,6 +59,8 @@ The adapters, Wi-Fi, and devices commands may display local interface names, MAC
 Reports may contain internal hostnames, IP addresses, prefixes, gateways, DNS and DHCP servers, MAC addresses, SSIDs, BSSIDs, routes, adapter details, and other infrastructure topology metadata. Users must protect, retain, and share these reports according to their organization's data-handling requirements.
 
 Reports will be created only when explicitly requested and will not contain credentials or Wi-Fi secrets.
+
+An anonymized report pseudonymizes direct identifiers with operation-local aliases and does not store the original-to-alias mapping. Vendor, radio, timing, count, and relationship data can remain, so this feature supports safer sharing but is not a guarantee of complete statistical anonymity.
 
 CLI reliability changes do not expand collection scope, bypass privacy controls, authorize arbitrary targets, or add active network techniques.
 

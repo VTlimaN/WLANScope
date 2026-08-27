@@ -1,9 +1,13 @@
+from collections.abc import Sequence
+
 from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
+from wlanscope.domain.enrichment import EnrichmentSource, VendorResolutionState
 from wlanscope.domain.nearby_wifi import (
     AvailableWifiNetwork,
     NativeNearbyWifiData,
     NearbyWifiInterface,
     WifiAccessPoint,
+    WifiAccessPointVendor,
     WifiScanIssue,
     WifiScanIssueCode,
 )
@@ -145,12 +149,51 @@ def test_empty_scan_is_successful() -> None:
     assert not snapshot.failed
 
 
+def test_vendor_enrichment_runs_once_after_access_point_deduplication() -> None:
+    older = _access_point(_FIRST_ID, b"SANITIZED", 11, 60, 5_180_000)
+    newer = _access_point(_FIRST_ID, b"SANITIZED", 11, 75, 5_180_000)
+    resolver = VendorResolverSpy()
+
+    snapshot = ScanNearbyWifi(
+        StaticNearbyCollector(
+            _data(
+                networks=(_available(_FIRST_ID, b"SANITIZED", 70, 1),),
+                access_points=(older, newer),
+            )
+        ),
+        resolver,
+    ).execute()
+
+    assert len(resolver.calls) == 1
+    assert len(resolver.calls[0]) == 1
+    assert snapshot.networks[0].access_points[0].vendor.vendor == "Example Networks"
+
+
 class StaticNearbyCollector:
     def __init__(self, data: NativeNearbyWifiData) -> None:
         self._data = data
 
     def collect(self) -> NativeNearbyWifiData:
         return self._data
+
+
+class VendorResolverSpy:
+    def __init__(self) -> None:
+        self.calls: list[tuple[WifiBssid, ...]] = []
+
+    def resolve_bssids(
+        self,
+        bssids: Sequence[WifiBssid],
+    ) -> tuple[WifiAccessPointVendor, ...]:
+        self.calls.append(tuple(bssids))
+        return tuple(
+            WifiAccessPointVendor(
+                VendorResolutionState.RESOLVED,
+                "Example Networks",
+                EnrichmentSource.LOCAL_OUI_REGISTRY,
+            )
+            for _ in bssids
+        )
 
 
 def _data(

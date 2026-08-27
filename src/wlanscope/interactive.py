@@ -13,6 +13,7 @@ from wlanscope.application.discover_local_devices import DiscoverLocalDevices
 from wlanscope.application.enrich_device_inventory import EnrichDeviceInventory
 from wlanscope.application.export_full_network_report import (
     ExportFullNetworkReport,
+    ReportExport,
     ReportPathError,
     paths_conflict,
 )
@@ -726,17 +727,36 @@ class InteractiveSession:
                     ReportPathError("JSON and Markdown reports must use different paths"),
                 )
                 continue
+            anonymize = self._anonymization_choice()
+            if anonymize is None:
+                continue
             snapshot = self._use_cases.full_scan.execute(False, Event())
-            self._export_reports(snapshot, json_path, markdown_path)
+            self._export_reports(snapshot, json_path, markdown_path, anonymize)
+
+    def _anonymization_choice(self) -> bool | None:
+        self._console.print("Anonymize report identifiers?")
+        self._console.print("1. Yes")
+        self._console.print("2. No")
+        self._console.print("0. Cancel")
+        while True:
+            choice = self._read("Select option: ")
+            if choice == "0":
+                return None
+            if choice in {"1", "2"}:
+                return choice == "1"
+            self._invalid_selection()
 
     def _export_reports(
         self,
         snapshot: FullNetworkSnapshot,
         json_path: Path | None,
         markdown_path: Path | None,
+        anonymize: bool,
     ) -> None:
         try:
-            exports = self._use_cases.reports.execute(snapshot, json_path, markdown_path, False)
+            exports = self._execute_report_export(
+                snapshot, json_path, markdown_path, False, anonymize
+            )
         except ReportWriteError as error:
             if "already exists" not in str(error):
                 self._operation_unavailable("Report export", error)
@@ -752,7 +772,9 @@ class InteractiveSession:
                     break
                 self._invalid_selection()
             try:
-                exports = self._use_cases.reports.execute(snapshot, json_path, markdown_path, True)
+                exports = self._execute_report_export(
+                    snapshot, json_path, markdown_path, True, anonymize
+                )
             except (ReportPathError, ReportWriteError) as retry_error:
                 self._operation_unavailable("Report export", retry_error)
                 return
@@ -765,6 +787,7 @@ class InteractiveSession:
                 (
                     ("Format", ", ".join(exported.format.value for exported in exports)),
                     ("Snapshot status", snapshot.status.value),
+                    ("Identifiers", "Anonymized" if anonymize else "Original"),
                 )
             )
         )
@@ -772,6 +795,24 @@ class InteractiveSession:
             self._console.print(
                 Text.assemble(f"Path ({exported.format.value}): ", Text(str(exported.path)))
             )
+
+    def _execute_report_export(
+        self,
+        snapshot: FullNetworkSnapshot,
+        json_path: Path | None,
+        markdown_path: Path | None,
+        force: bool,
+        anonymize: bool,
+    ) -> tuple[ReportExport, ...]:
+        if anonymize:
+            return self._use_cases.reports.execute(
+                snapshot,
+                json_path,
+                markdown_path,
+                force,
+                anonymize=True,
+            )
+        return self._use_cases.reports.execute(snapshot, json_path, markdown_path, force)
 
     def _about(self) -> None:
         self._begin_screen("About")

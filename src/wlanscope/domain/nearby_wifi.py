@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 
+from wlanscope.domain.enrichment import EnrichmentSource, VendorResolutionState
 from wlanscope.domain.interfaces import normalize_stable_id
 from wlanscope.domain.wifi import (
     WifiAuthentication,
@@ -32,6 +33,59 @@ class WifiRsnDetails:
     group_management_cipher: str | None = None
 
 
+class WifiWpsPresence(Enum):
+    UNAVAILABLE = "Unavailable"
+    NOT_PRESENT = "No"
+    PRESENT = "Yes"
+
+
+class WifiWpsParseStatus(Enum):
+    COMPLETE = "Complete"
+    PARTIAL = "Partial"
+
+
+@dataclass(frozen=True, slots=True)
+class WifiProtectedSetupDetails:
+    presence: WifiWpsPresence = WifiWpsPresence.UNAVAILABLE
+    ie_count: int = 0
+    parse_status: WifiWpsParseStatus | None = None
+    version: int | None = None
+    state: int | None = None
+    ap_setup_locked: bool | None = None
+    selected_registrar: bool | None = None
+    device_password_id: int | None = None
+    config_methods: tuple[str, ...] = ()
+    config_methods_raw: int | None = None
+    config_methods_unknown_bits: int = 0
+    manufacturer: str | None = None
+    model_name: str | None = None
+    model_number: str | None = None
+    device_name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.ie_count < 0:
+            raise ValueError("WPS IE count cannot be negative")
+        if self.presence is WifiWpsPresence.PRESENT:
+            if self.ie_count == 0 or self.parse_status is None:
+                raise ValueError("Present WPS data requires an IE count and parse status")
+        elif self.ie_count or self.parse_status is not None:
+            raise ValueError("Absent WPS data cannot contain parsed IE metadata")
+
+
+@dataclass(frozen=True, slots=True)
+class WifiAccessPointVendor:
+    state: VendorResolutionState = VendorResolutionState.REGISTRY_UNAVAILABLE
+    vendor: str | None = None
+    source: EnrichmentSource | None = None
+
+    def __post_init__(self) -> None:
+        if self.state is VendorResolutionState.RESOLVED:
+            if not self.vendor or self.source is not EnrichmentSource.LOCAL_OUI_REGISTRY:
+                raise ValueError("A resolved AP vendor requires a name and registry source")
+        elif self.vendor is not None or self.source is not None:
+            raise ValueError("An unresolved AP vendor cannot contain a name or source")
+
+
 @dataclass(frozen=True, slots=True)
 class WifiInformationElementSummary:
     available: bool = False
@@ -47,6 +101,7 @@ class WifiInformationElementSummary:
     vendor_specific_ouis: tuple[str, ...] = ()
     unknown_element_ids: tuple[int, ...] = ()
     malformed: bool = False
+    wps: WifiProtectedSetupDetails = WifiProtectedSetupDetails()
 
 
 def wifi_band_from_frequency(center_frequency_khz: int) -> WifiBand:
@@ -138,6 +193,7 @@ class WifiAccessPoint:
     basic_rates_mbps: tuple[float, ...] = ()
     capability_flags: tuple[str, ...] = ()
     information_elements: WifiInformationElementSummary = WifiInformationElementSummary()
+    vendor: WifiAccessPointVendor = WifiAccessPointVendor()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "interface_id", normalize_stable_id(self.interface_id))

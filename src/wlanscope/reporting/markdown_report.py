@@ -4,8 +4,9 @@ import re
 from datetime import UTC, datetime
 
 from wlanscope.domain.full_scan import FullNetworkSnapshot
-from wlanscope.domain.nearby_wifi import WifiNetwork
+from wlanscope.domain.nearby_wifi import WifiNetwork, WifiProtectedSetupDetails, WifiWpsPresence
 from wlanscope.domain.wifi import WifiAuthCipherCapabilities, WifiSsid
+from wlanscope.reporting.anonymization import ReportAnonymizer
 from wlanscope.reporting.json_report import REPORT_SCHEMA_VERSION
 from wlanscope.version import __version__
 
@@ -15,12 +16,16 @@ _LOCAL_PATH = re.compile(r"(?i)(?:[a-z]:\\|\\\\)[^\s\"']+")
 _MARKDOWN_SPECIAL = frozenset("\\|`*_[]<>")
 
 
-def render_markdown_report(snapshot: FullNetworkSnapshot) -> str:
+def render_markdown_report(
+    snapshot: FullNetworkSnapshot,
+    anonymizer: ReportAnonymizer | None = None,
+) -> str:
     lines = [
         "# WLANScope Network Report",
         "",
         f"- Tool version: {escape_markdown(__version__)}",
         f"- Report schema: {REPORT_SCHEMA_VERSION}",
+        f"- Identifiers: {'anonymized' if anonymizer else 'not anonymized'}",
         f"- Scan started: {_timestamp(snapshot.started_at)}",
         f"- Scan completed: {_timestamp(snapshot.completed_at)}",
         f"- Global status: {snapshot.status.value}",
@@ -35,20 +40,20 @@ def render_markdown_report(snapshot: FullNetworkSnapshot) -> str:
         for result in snapshot.sections
     )
     lines.extend(("", "## Network Interfaces", ""))
-    _render_interfaces(snapshot, lines)
+    _render_interfaces(snapshot, lines, anonymizer)
     lines.extend(("", "## Current Wi-Fi", ""))
-    _render_current_wifi(snapshot, lines)
+    _render_current_wifi(snapshot, lines, anonymizer)
     lines.extend(("", "## Current Network", ""))
-    _render_current_network(snapshot, lines)
+    _render_current_network(snapshot, lines, anonymizer)
     lines.extend(("", "## Nearby Wi-Fi", ""))
-    _render_nearby_wifi(snapshot, lines)
+    _render_nearby_wifi(snapshot, lines, anonymizer)
     lines.extend(("", "## Observed Devices", ""))
-    _render_devices(snapshot, lines)
+    _render_devices(snapshot, lines, anonymizer)
     lines.extend(("", "## Issues", ""))
     if snapshot.issues:
         lines.extend(
             f"- **{escape_markdown(issue.section.value)}:** "
-            f"{escape_markdown(_sanitize_issue(issue.message))}"
+            f"{escape_markdown(_sanitize_issue(issue.message, anonymizer))}"
             for issue in snapshot.issues
         )
     else:
@@ -78,7 +83,11 @@ def escape_markdown(value: str) -> str:
     return escaped.replace("\n", "<br>")
 
 
-def _render_interfaces(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
+def _render_interfaces(
+    snapshot: FullNetworkSnapshot,
+    lines: list[str],
+    anonymizer: ReportAnonymizer | None,
+) -> None:
     if snapshot.interfaces is None:
         lines.append("Unavailable.")
         return
@@ -92,10 +101,14 @@ def _render_interfaces(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
         lines.append(
             _row(
                 str(item.interface_index),
-                item.friendly_name,
+                anonymizer.interface(item.friendly_name) if anonymizer else item.friendly_name,
                 item.kind.value,
                 item.operational_state.value,
-                str(item.mac_address) if item.mac_address else "Unknown",
+                anonymizer.mac(str(item.mac_address))
+                if anonymizer and item.mac_address
+                else str(item.mac_address)
+                if item.mac_address
+                else "Unknown",
                 str(item.mtu) if item.mtu else "Unknown",
             )
         )
@@ -123,7 +136,11 @@ def _render_interfaces(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
             )
 
 
-def _render_current_wifi(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
+def _render_current_wifi(
+    snapshot: FullNetworkSnapshot,
+    lines: list[str],
+    anonymizer: ReportAnonymizer | None,
+) -> None:
     if snapshot.current_wifi is None:
         lines.append("Unavailable.")
         return
@@ -131,11 +148,17 @@ def _render_current_wifi(snapshot: FullNetworkSnapshot, lines: list[str]) -> Non
         lines.append("No WLAN interfaces were reported.")
         return
     for interface in snapshot.current_wifi.interfaces:
+        description = (
+            anonymizer.interface(interface.description) if anonymizer else interface.description
+        )
+        interface_id = (
+            anonymizer.identifier(interface.interface_id) if anonymizer else interface.interface_id
+        )
         lines.extend(
             (
-                f"### {escape_markdown(interface.description)}",
+                f"### {escape_markdown(description)}",
                 "",
-                f"- Interface ID: {escape_markdown(interface.interface_id)}",
+                f"- Interface ID: {escape_markdown(interface_id)}",
                 f"- State: {escape_markdown(interface.state.display_name)}",
             )
         )
@@ -143,14 +166,25 @@ def _render_current_wifi(snapshot: FullNetworkSnapshot, lines: list[str]) -> Non
         if connection is None:
             lines.extend(("- Connection: Unavailable", ""))
             continue
+        raw_ssid = (
+            connection.ssid.raw.hex()
+            if anonymizer is None or connection.ssid.is_empty
+            else "anonymized"
+        )
+        bssid = anonymizer.bssid(str(connection.bssid)) if anonymizer else str(connection.bssid)
+        profile = (
+            anonymizer.profile(connection.profile_name)
+            if anonymizer and connection.profile_name
+            else connection.profile_name
+        )
         lines.extend(
             (
-                f"- SSID: {_ssid_display(connection.ssid)}",
-                f"- SSID raw hex: `{connection.ssid.raw.hex()}`",
-                f"- BSSID: {connection.bssid}",
+                f"- SSID: {_ssid_display(connection.ssid, anonymizer)}",
+                f"- SSID raw hex: `{raw_ssid}`",
+                f"- BSSID: {bssid}",
                 "- BSS type: "
                 f"{_value(connection.bss_type.display_name if connection.bss_type else None)}",
-                f"- Profile: {_value(connection.profile_name)}",
+                f"- Profile: {_value(profile)}",
                 f"- PHY: {escape_markdown(connection.phy_type.display_name)}",
                 f"- Signal quality: {connection.signal_quality}%",
                 f"- RSSI: {interface.rssi_dbm} dBm"
@@ -184,7 +218,11 @@ def _render_current_wifi(snapshot: FullNetworkSnapshot, lines: list[str]) -> Non
             )
 
 
-def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
+def _render_current_network(
+    snapshot: FullNetworkSnapshot,
+    lines: list[str],
+    anonymizer: ReportAnonymizer | None,
+) -> None:
     network = snapshot.current_network
     if network is None:
         lines.append("Unavailable.")
@@ -202,9 +240,9 @@ def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> 
             lines.append(
                 _row(
                     str(context.interface_index),
-                    str(assignment.address),
+                    anonymizer.ip(assignment.address) if anonymizer else str(assignment.address),
                     str(assignment.prefix_length),
-                    str(assignment.network),
+                    anonymizer.ip(assignment.network) if anonymizer else str(assignment.network),
                     ", ".join(assignment.classifications) or "Unknown",
                     f"{assignment.prefix_origin.display_name} / "
                     f"{assignment.address_origin.display_name}",
@@ -214,11 +252,17 @@ def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> 
     lines.extend(("", "### DNS and DHCP", ""))
     for context in network.interfaces:
         servers = (
-            ", ".join(str(server) for server in context.dns.servers)
+            ", ".join(
+                anonymizer.ip(server) if anonymizer else str(server)
+                for server in context.dns.servers
+            )
             if context.dns
             else "Unavailable"
         )
-        suffix = _value(context.dns.suffix if context.dns else None)
+        suffix_value = context.dns.suffix if context.dns else None
+        suffix = _value(
+            anonymizer.domain(suffix_value) if anonymizer and suffix_value else suffix_value
+        )
         dns_registration = (
             _optional_boolean(context.dns.registration_enabled) if context.dns else "Unavailable"
         )
@@ -233,6 +277,13 @@ def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> 
         lease_expires = _value(
             context.dhcp.lease_expires.isoformat() if context.dhcp.lease_expires else None
         )
+        dhcp_server = (
+            anonymizer.ip(context.dhcp.server)
+            if anonymizer and context.dhcp.server
+            else str(context.dhcp.server)
+            if context.dhcp.server
+            else None
+        )
         lines.extend(
             (
                 f"- Interface {context.interface_index}",
@@ -242,17 +293,26 @@ def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> 
                 f"  - DNS suffix registration: {dns_suffix_registration}",
                 f"  - DHCP IPv4: {context.dhcp.ipv4_state.value}",
                 f"  - DHCP IPv6: {context.dhcp.ipv6_state.value}",
-                "  - DHCP server: "
-                f"{_value(str(context.dhcp.server) if context.dhcp.server else None)}",
+                f"  - DHCP server: {_value(dhcp_server)}",
                 f"  - DHCP lease obtained: {lease_obtained}",
                 f"  - DHCP lease expires: {lease_expires}",
             )
         )
         if context.profile is not None:
+            profile_name = (
+                anonymizer.profile(context.profile.name)
+                if anonymizer and context.profile.name
+                else context.profile.name
+            )
+            profile_alias = (
+                anonymizer.interface(context.profile.interface_alias)
+                if anonymizer and context.profile.interface_alias
+                else context.profile.interface_alias
+            )
             lines.extend(
                 (
-                    f"  - Network profile: {_value(context.profile.name)}",
-                    f"  - Profile interface alias: {_value(context.profile.interface_alias)}",
+                    f"  - Network profile: {_value(profile_name)}",
+                    f"  - Profile interface alias: {_value(profile_alias)}",
                     f"  - Network category: {_value(context.profile.category)}",
                     f"  - IPv4 connectivity: {context.profile.ipv4_connectivity.value}",
                     f"  - IPv6 connectivity: {context.profile.ipv6_connectivity.value}",
@@ -271,8 +331,8 @@ def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> 
         for route in network.default_routes:
             lines.append(
                 _row(
-                    str(route.destination),
-                    str(route.next_hop),
+                    anonymizer.ip(route.destination) if anonymizer else str(route.destination),
+                    anonymizer.ip(route.next_hop) if anonymizer else str(route.next_hop),
                     str(route.interface_index),
                     str(route.route_metric),
                     str(route.effective_metric)
@@ -282,7 +342,11 @@ def _render_current_network(snapshot: FullNetworkSnapshot, lines: list[str]) -> 
             )
 
 
-def _render_nearby_wifi(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
+def _render_nearby_wifi(
+    snapshot: FullNetworkSnapshot,
+    lines: list[str],
+    anonymizer: ReportAnonymizer | None,
+) -> None:
     nearby = snapshot.nearby_wifi
     if nearby is None:
         lines.append("Unavailable.")
@@ -299,8 +363,10 @@ def _render_nearby_wifi(snapshot: FullNetworkSnapshot, lines: list[str]) -> None
     for network in nearby.networks:
         lines.append(
             _row(
-                _ssid_plain(network.ssid),
-                network.interface_description,
+                _ssid_plain(network.ssid, anonymizer),
+                anonymizer.interface(network.interface_description)
+                if anonymizer
+                else network.interface_description,
                 f"{network.signal_quality}%",
                 f"{network.authentication.display_name} / {network.cipher.display_name}",
                 str(network.reported_bss_count),
@@ -308,11 +374,16 @@ def _render_nearby_wifi(snapshot: FullNetworkSnapshot, lines: list[str]) -> None
             )
         )
     for index, network in enumerate(nearby.networks, 1):
-        _render_access_points(index, network, lines)
+        _render_access_points(index, network, lines, anonymizer)
 
 
-def _render_access_points(index: int, network: WifiNetwork, lines: list[str]) -> None:
-    lines.extend(("", f"### Network {index}: {_ssid_display(network.ssid)}", ""))
+def _render_access_points(
+    index: int,
+    network: WifiNetwork,
+    lines: list[str],
+    anonymizer: ReportAnonymizer | None,
+) -> None:
+    lines.extend(("", f"### Network {index}: {_ssid_display(network.ssid, anonymizer)}", ""))
     if not network.access_points:
         lines.append("No BSS observations were reported.")
         return
@@ -323,9 +394,10 @@ def _render_access_points(index: int, network: WifiNetwork, lines: list[str]) ->
         )
     )
     for access_point in network.access_points:
+        bssid = anonymizer.bssid(str(access_point.bssid)) if anonymizer else str(access_point.bssid)
         lines.append(
             _row(
-                str(access_point.bssid),
+                bssid,
                 access_point.phy_type.display_name,
                 f"{access_point.signal_quality}%",
                 f"{access_point.rssi_dbm} dBm",
@@ -339,23 +411,77 @@ def _render_access_points(index: int, network: WifiNetwork, lines: list[str]) ->
         rsn = access_point.information_elements.rsn
         lines.extend(
             (
-                f"- {access_point.bssid} supported rates: "
+                f"- {bssid} vendor: "
+                f"{escape_markdown(access_point.vendor.vendor or access_point.vendor.state.value)}",
+                f"- {bssid} supported rates: "
                 f"{escape_markdown(rates) if rates else 'Unavailable'} Mbps",
-                f"- {access_point.bssid} capabilities: "
-                f"{escape_markdown(flags) if flags else 'None reported'}",
-                f"- {access_point.bssid} RSN: {'Present' if rsn is not None else 'Unavailable'}",
+                f"- {bssid} capabilities: {escape_markdown(flags) if flags else 'None reported'}",
+                f"- {bssid} RSN: {'Present' if rsn is not None else 'Unavailable'}",
             )
         )
+        _render_wps(bssid, access_point.information_elements.wps, lines, anonymizer)
 
 
-def _render_devices(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
+def _render_wps(
+    bssid: str,
+    wps: WifiProtectedSetupDetails,
+    lines: list[str],
+    anonymizer: ReportAnonymizer | None,
+) -> None:
+    lines.append(f"- {bssid} WPS present: {wps.presence.value}")
+    if wps.presence is not WifiWpsPresence.PRESENT:
+        return
+    lines.append(f"  - Parse status: {wps.parse_status.value if wps.parse_status else 'Unknown'}")
+    if wps.state is not None:
+        state = {1: "Not configured", 2: "Configured"}.get(
+            wps.state, f"Unknown (0x{wps.state:02X})"
+        )
+        lines.append(f"  - State: {state}")
+    lines.append(f"  - AP Setup Locked: {_wps_boolean(wps.ap_setup_locked)}")
+    lines.append(f"  - Selected Registrar: {_wps_boolean(wps.selected_registrar)}")
+    if wps.config_methods_raw is not None:
+        methods = ", ".join(wps.config_methods) or "None decoded"
+        if wps.config_methods_unknown_bits:
+            methods += f"; unknown bits 0x{wps.config_methods_unknown_bits:04X}"
+        lines.append(f"  - Config Methods: {escape_markdown(methods)}")
+    for label, value in (
+        ("Manufacturer", wps.manufacturer),
+        ("Model Name", wps.model_name),
+        ("Model Number", wps.model_number),
+        (
+            "Device Name",
+            anonymizer.identifier(wps.device_name)
+            if anonymizer and wps.device_name is not None
+            else wps.device_name,
+        ),
+    ):
+        if value is not None:
+            lines.append(f"  - {label}: {escape_markdown(value or 'Empty')}")
+
+
+def _wps_boolean(value: bool | None) -> str:
+    if value is None:
+        return "Unknown"
+    return "Yes" if value else "No"
+
+
+def _render_devices(
+    snapshot: FullNetworkSnapshot,
+    lines: list[str],
+    anonymizer: ReportAnonymizer | None,
+) -> None:
     devices = snapshot.devices
     if devices is None:
         lines.append("Unavailable.")
         return
+    subnet = (
+        anonymizer.ip(devices.discovered.plan.subnet)
+        if anonymizer
+        else str(devices.discovered.plan.subnet)
+    )
     lines.extend(
         (
-            f"- Discovery subnet: {devices.discovered.plan.subnet}",
+            f"- Discovery subnet: {subnet}",
             f"- Probes executed: {devices.discovered.probes_executed}",
             f"- Observed hosts: {len(devices.hosts)}",
             "",
@@ -365,12 +491,19 @@ def _render_devices(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
     )
     for item in devices.hosts:
         host = item.discovered
+        address = anonymizer.ip(host.address) if anonymizer else str(host.address)
         lines.append(
             _row(
-                str(host.address),
+                address,
                 str(host.interface_index),
-                str(host.mac_address) if host.mac_address else "Unknown",
-                item.hostname.hostname or item.hostname.state.value,
+                anonymizer.mac(str(host.mac_address))
+                if anonymizer and host.mac_address
+                else str(host.mac_address)
+                if host.mac_address
+                else "Unknown",
+                anonymizer.hostname(item.hostname.hostname)
+                if anonymizer and item.hostname.hostname
+                else item.hostname.hostname or item.hostname.state.value,
                 item.vendor.vendor or item.vendor.state.value,
                 host.reachability.value,
                 ", ".join(
@@ -379,14 +512,14 @@ def _render_devices(snapshot: FullNetworkSnapshot, lines: list[str]) -> None:
             )
         )
         if host.is_router:
-            lines.append(f"- {host.address}: router indication reported by neighbor cache")
+            lines.append(f"- {address}: router indication reported by neighbor cache")
         lines.append(
-            f"- {host.address}: address classification "
+            f"- {address}: address classification "
             f"{escape_markdown(', '.join(host.address_classifications) or 'Unknown')}"
         )
         if host.mac_address is not None:
             lines.append(
-                f"- {host.address}: locally administered MAC "
+                f"- {address}: locally administered MAC "
                 f"{'Yes' if host.mac_address.is_locally_administered else 'No'}"
             )
 
@@ -406,12 +539,14 @@ def _markdown_auth_cipher(item: WifiAuthCipherCapabilities) -> str:
     )
 
 
-def _ssid_plain(ssid: WifiSsid) -> str:
-    return ssid.display_text if not ssid.is_empty else "<Hidden>"
+def _ssid_plain(ssid: WifiSsid, anonymizer: ReportAnonymizer | None = None) -> str:
+    if ssid.is_empty:
+        return "<Hidden>"
+    return anonymizer.ssid(ssid.display_text) if anonymizer else ssid.display_text
 
 
-def _ssid_display(ssid: WifiSsid) -> str:
-    return escape_markdown(_ssid_plain(ssid))
+def _ssid_display(ssid: WifiSsid, anonymizer: ReportAnonymizer | None = None) -> str:
+    return escape_markdown(_ssid_plain(ssid, anonymizer))
 
 
 def _value(value: str | None) -> str:
@@ -428,5 +563,7 @@ def _timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _sanitize_issue(value: str) -> str:
+def _sanitize_issue(value: str, anonymizer: ReportAnonymizer | None = None) -> str:
+    if anonymizer is not None:
+        return anonymizer.sanitize_text(value)
     return _LOCAL_PATH.sub("<local-path>", value)

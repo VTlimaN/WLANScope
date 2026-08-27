@@ -8,22 +8,45 @@ from wlanscope.domain.nearby_wifi import (
     NearbyWifiInterface,
     NearbyWifiSnapshot,
     WifiAccessPoint,
+    WifiAccessPointVendor,
     WifiNetwork,
 )
-from wlanscope.domain.wifi import WifiAuthentication, WifiCipher
+from wlanscope.domain.wifi import WifiAuthentication, WifiBssid, WifiCipher
 
 
 class NearbyWifiCollector(Protocol):
     def collect(self) -> NativeNearbyWifiData: ...
 
 
+class AccessPointVendorResolver(Protocol):
+    def resolve_bssids(
+        self,
+        bssids: Sequence[WifiBssid],
+    ) -> tuple[WifiAccessPointVendor, ...]: ...
+
+
 class ScanNearbyWifi:
-    def __init__(self, collector: NearbyWifiCollector) -> None:
+    def __init__(
+        self,
+        collector: NearbyWifiCollector,
+        vendor_resolver: AccessPointVendorResolver | None = None,
+    ) -> None:
         self._collector = collector
+        self._vendor_resolver = vendor_resolver
 
     def execute(self) -> NearbyWifiSnapshot:
         data = self._collector.collect()
         access_points = _deduplicate_access_points(data.access_points)
+        if self._vendor_resolver is not None:
+            resolutions = self._vendor_resolver.resolve_bssids(
+                tuple(access_point.bssid for access_point in access_points)
+            )
+            if len(resolutions) != len(access_points):
+                raise ValueError("AP vendor resolver must preserve access point cardinality")
+            access_points = tuple(
+                replace(access_point, vendor=resolution)
+                for access_point, resolution in zip(access_points, resolutions, strict=True)
+            )
         networks = _build_networks(data.available_networks, access_points, data.interfaces)
         return NearbyWifiSnapshot(data.interfaces, _sort_networks(networks), data.issues)
 

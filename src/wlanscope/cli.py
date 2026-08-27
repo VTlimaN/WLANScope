@@ -43,7 +43,12 @@ from wlanscope.domain.interfaces import (
     InterfaceCollectionError,
     NetworkInterface,
 )
-from wlanscope.domain.nearby_wifi import WifiAccessPoint, WifiNetwork
+from wlanscope.domain.nearby_wifi import (
+    WifiAccessPoint,
+    WifiNetwork,
+    WifiProtectedSetupDetails,
+    WifiWpsPresence,
+)
 from wlanscope.domain.network import (
     UNUSED_ROUTE_METRIC,
     CurrentNetworkSnapshot,
@@ -197,6 +202,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite only explicitly requested JSON or Markdown report files",
     )
+    scan_parser.add_argument(
+        "--anonymize",
+        action="store_true",
+        help="Pseudonymize direct identifiers in explicitly requested reports",
+    )
     return parser
 
 
@@ -237,6 +247,12 @@ def main(
             and parsed_arguments.markdown is None
         ):
             parser.error("--force requires --json or --markdown")
+        if (
+            parsed_arguments.anonymize
+            and parsed_arguments.json is None
+            and parsed_arguments.markdown is None
+        ):
+            parser.error("--anonymize requires --json or --markdown")
         if paths_conflict(parsed_arguments.json, parsed_arguments.markdown):
             parser.error("--json and --markdown must use different paths")
     if parsed_arguments.command is None:
@@ -303,6 +319,7 @@ def main(
             parsed_arguments.json,
             parsed_arguments.markdown,
             parsed_arguments.force,
+            parsed_arguments.anonymize,
             output,
             diagnostics,
         )
@@ -415,6 +432,7 @@ def _run_full_scan(
     json_path: Path | None,
     markdown_path: Path | None,
     force: bool,
+    anonymize: bool,
     console: Console,
     error_console: Console,
 ) -> int:
@@ -433,7 +451,16 @@ def _run_full_scan(
     if snapshot.issues:
         error_console.print(create_full_scan_issues(snapshot))
     try:
-        exports = report_exporter.execute(snapshot, json_path, markdown_path, force)
+        if anonymize:
+            exports = report_exporter.execute(
+                snapshot,
+                json_path,
+                markdown_path,
+                force,
+                anonymize=True,
+            )
+        else:
+            exports = report_exporter.execute(snapshot, json_path, markdown_path, force)
     except (ReportPathError, ReportWriteError) as error:
         error_console.print(create_notice("Failed", error, "Report error"))
         return 1
@@ -974,6 +1001,10 @@ def _create_nearby_network_detail_table(details: NearbyWifiNetworkDetails) -> Ta
     )
     table.add_row("Reported BSS count", str(details.reported_bss_count))
     table.add_row("Observed BSS count", str(details.observed_bss_count))
+    table.add_row(
+        "WPS observed on APs",
+        f"{details.wps_observed_count} / {details.observed_bss_count}",
+    )
     table.add_row("BSS count discrepancy", "Yes" if details.has_bss_count_discrepancy else "No")
     table.add_row("Bands", ", ".join(band.value for band in details.bands) or "Unknown")
     table.add_row(
@@ -1020,6 +1051,10 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
     table = _create_detail_table()
     table.add_row("Identity", "")
     table.add_row("BSSID", str(access_point.bssid))
+    table.add_row(
+        "Vendor",
+        Text(_vendor_display(access_point.vendor.state, access_point.vendor.vendor)),
+    )
     table.add_row("SSID", Text(access_point.ssid.display_text or "<Hidden>"))
     table.add_row("Interface identifier", Text(access_point.interface_id))
     table.add_row("PHY", access_point.phy_type.display_name)
@@ -1126,7 +1161,61 @@ def _create_access_point_detail_table(access_point: WifiAccessPoint) -> Table:
         "IE parse status",
         "Unavailable" if not elements.available else "Malformed" if elements.malformed else "Valid",
     )
+    table.add_section()
+    table.add_row("WPS", "")
+    table.add_row("Present", elements.wps.presence.value)
+    if elements.wps.presence is WifiWpsPresence.PRESENT:
+        _add_wps_rows(table, elements.wps)
     return table
+
+
+def _add_wps_rows(table: Table, wps: WifiProtectedSetupDetails) -> None:
+    table.add_row("Parse status", wps.parse_status.value if wps.parse_status else "Unknown")
+    table.add_row("Observed WPS IE count", str(wps.ie_count))
+    if wps.version is not None:
+        table.add_row("Version", f"{wps.version >> 4}.{wps.version & 0x0F} (0x{wps.version:02X})")
+    if wps.state is not None:
+        table.add_row("State", _wps_state_display(wps.state))
+    table.add_row("AP Setup Locked", _wps_boolean(wps.ap_setup_locked))
+    table.add_row("Selected Registrar", _wps_boolean(wps.selected_registrar))
+    if wps.device_password_id is not None:
+        table.add_row("Device Password ID", _wps_device_password_display(wps.device_password_id))
+    if wps.config_methods_raw is not None:
+        methods = ", ".join(wps.config_methods) or "None decoded"
+        if wps.config_methods_unknown_bits:
+            methods += f"; unknown bits 0x{wps.config_methods_unknown_bits:04X}"
+        table.add_row("Config Methods", methods)
+    for label, value in (
+        ("Manufacturer", wps.manufacturer),
+        ("Model Name", wps.model_name),
+        ("Model Number", wps.model_number),
+        ("Device Name", wps.device_name),
+    ):
+        if value is not None:
+            table.add_row(label, Text(value or "Empty"))
+
+
+def _wps_state_display(value: int) -> str:
+    return {1: "Not configured", 2: "Configured"}.get(value, f"Unknown (0x{value:02X})")
+
+
+def _wps_boolean(value: bool | None) -> str:
+    if value is None:
+        return "Unknown"
+    return "Yes" if value else "No"
+
+
+def _wps_device_password_display(value: int) -> str:
+    name = {
+        0x0000: "Default",
+        0x0001: "User-specified",
+        0x0002: "Machine-specified",
+        0x0003: "Rekey",
+        0x0004: "Push Button",
+        0x0005: "Registrar-specified",
+        0x0007: "NFC Connection Handover",
+    }.get(value)
+    return f"{name} (0x{value:04X})" if name else f"Unknown (0x{value:04X})"
 
 
 def _create_detail_table() -> Table:

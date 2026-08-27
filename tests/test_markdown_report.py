@@ -41,6 +41,11 @@ def test_markdown_contains_grouped_deep_inspection_data() -> None:
     assert "supported rates: 1, 2, 5.5 Mbps" in report
     assert "RSN: Present" in report
     assert "router indication reported by neighbor cache" in report
+    assert "vendor: Example Network" in report
+    assert "WPS present: Yes" in report
+    assert "State: Configured" in report
+    assert "AP Setup Locked: Yes" in report
+    assert "Selected Registrar: No" in report
 
 
 def test_markdown_escapes_external_values() -> None:

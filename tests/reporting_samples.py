@@ -40,9 +40,13 @@ from wlanscope.domain.nearby_wifi import (
     NearbyWifiInterface,
     NearbyWifiSnapshot,
     WifiAccessPoint,
+    WifiAccessPointVendor,
     WifiInformationElementSummary,
     WifiNetwork,
+    WifiProtectedSetupDetails,
     WifiRsnDetails,
+    WifiWpsParseStatus,
+    WifiWpsPresence,
 )
 from wlanscope.domain.network import (
     AddressOrigin,
@@ -288,6 +292,28 @@ def _nearby(ssid: WifiSsid, external_text: str) -> NearbyWifiSnapshot:
             country_code="US",
             rsn=WifiRsnDetails(1, "CCMP-128", ("CCMP-128",), ("PSK",), True, False),
             ht_capabilities_present=True,
+            wps=WifiProtectedSetupDetails(
+                WifiWpsPresence.PRESENT,
+                1,
+                WifiWpsParseStatus.COMPLETE,
+                0x20,
+                2,
+                True,
+                False,
+                4,
+                ("Push Button",),
+                0x0080,
+                0,
+                external_text,
+                "Model X",
+                "1",
+                external_text,
+            ),
+        ),
+        WifiAccessPointVendor(
+            VendorResolutionState.RESOLVED,
+            external_text,
+            EnrichmentSource.LOCAL_OUI_REGISTRY,
         ),
     )
     network = WifiNetwork(

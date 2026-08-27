@@ -99,6 +99,31 @@ def test_json_and_markdown_execute_full_scan_once(tmp_path: Path) -> None:
     assert "2026-01-02T03:04:05.000000Z" in markdown_path.read_text(encoding="utf-8")
 
 
+def test_anonymized_dual_format_uses_one_scan_and_shared_aliases(tmp_path: Path) -> None:
+    json_path = tmp_path / "scan.json"
+    markdown_path = tmp_path / "scan.md"
+    scan = FullScanSpy(sample_snapshot())
+
+    exit_code, _ = run_reporting_cli(
+        [
+            "scan",
+            "--json",
+            str(json_path),
+            "--markdown",
+            str(markdown_path),
+            "--anonymize",
+        ],
+        scan,
+    )
+
+    json_text = json_path.read_text(encoding="utf-8")
+    markdown_text = markdown_path.read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert scan.calls == 1
+    assert '"anonymized": true' in json_text
+    assert "IPV4-001" in json_text and "IPV4-001" in markdown_text
+
+
 def test_partial_scan_exports_reports_and_preserves_exit_three(tmp_path: Path) -> None:
     target = tmp_path / "partial.json"
     scan = FullScanSpy(sample_snapshot(ScanSectionStatus.PARTIAL))

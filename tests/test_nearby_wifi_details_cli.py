@@ -1,3 +1,4 @@
+from dataclasses import replace
 from io import StringIO
 
 import pytest
@@ -6,11 +7,13 @@ from rich.console import Console
 
 from wlanscope.application.scan_nearby_wifi import ScanNearbyWifi
 from wlanscope.cli import main
+from wlanscope.domain.enrichment import EnrichmentSource, VendorResolutionState
 from wlanscope.domain.nearby_wifi import (
     AvailableWifiNetwork,
     NativeNearbyWifiData,
     NearbyWifiInterface,
     WifiAccessPoint,
+    WifiAccessPointVendor,
     WifiScanIssue,
     WifiScanIssueCode,
 )
@@ -21,6 +24,7 @@ from wlanscope.domain.wifi import (
     WifiPhyType,
     WifiSsid,
 )
+from wlanscope.platform.windows.wifi_ie import parse_information_elements
 
 _FIRST_ID = "aaaaaaaa-0000-0000-0000-000000000001"
 _SECOND_ID = "bbbbbbbb-0000-0000-0000-000000000002"
@@ -238,6 +242,45 @@ def test_unknown_channel_remains_unknown_in_access_point_detail() -> None:
 
     assert exit_code == 0
     assert "Unknown" in output.getvalue()
+
+
+def test_access_point_detail_shows_vendor_and_passive_wps_facts() -> None:
+    output = StringIO()
+    ssid = WifiSsid(b"SANITIZED")
+    wps_payload = (
+        b"\x00\x50\xf2\x04"
+        b"\x10\x44\x00\x01\x02"
+        b"\x10\x57\x00\x01\x01"
+        b"\x10\x41\x00\x01\x00"
+        b"\x10\x08\x00\x02\x00\x80"
+    )
+    access_point = replace(
+        _access_point(_FIRST_ID, ssid, 11, 5_180_000),
+        information_elements=parse_information_elements(
+            bytes((221, len(wps_payload))) + wps_payload
+        ),
+        vendor=WifiAccessPointVendor(
+            VendorResolutionState.RESOLVED,
+            "Example Networks",
+            EnrichmentSource.LOCAL_OUI_REGISTRY,
+        ),
+    )
+
+    exit_code = main(
+        ["wifi", "scan", "--details", "1", "--access-point", "1"],
+        nearby_wifi_use_case=ScanNearbyWifi(
+            CountingCollector(_data(access_points=(access_point,)))
+        ),
+        console=_console(output),
+    )
+
+    rendered = output.getvalue()
+    assert exit_code == 0
+    assert "Vendor" in rendered and "Example Networks" in rendered
+    assert "WPS" in rendered and "Configured" in rendered
+    assert "AP Setup Locked" in rendered and "Yes" in rendered
+    assert "Selected Registrar" in rendered and "No" in rendered
+    assert "Push Button" in rendered
 
 
 class CountingCollector:

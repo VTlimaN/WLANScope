@@ -43,6 +43,7 @@ python -m venv .venv
 .\.venv\Scripts\wlanscope.exe scan --markdown C:\Reports\scan.md
 .\.venv\Scripts\wlanscope.exe scan --json C:\Reports\scan.json --markdown C:\Reports\scan.md
 .\.venv\Scripts\wlanscope.exe scan --json C:\Reports\scan.json --force
+.\.venv\Scripts\wlanscope.exe scan --json C:\Reports\scan.json --anonymize
 .\.venv\Scripts\python.exe -m wlanscope --help
 .\.venv\Scripts\python.exe -m wlanscope --version
 ```
@@ -80,7 +81,7 @@ CLI exit codes are consistent across commands:
 
 Full scan status is `SUCCESS` when every section completes normally, `PARTIAL` when useful results coexist with a limited, failed, or skipped section, and `FAILED` when no principal section produces useful information. Individual commands remain available for detailed inspection; without explicit export flags, `scan` presents only a compact operational overview and creates no files.
 
-Reports can contain IP and MAC addresses, SSIDs, BSSIDs, gateways, DNS topology, hostnames, vendor names, and wireless security metadata. They contain no Wi-Fi passwords, PSKs, credentials, profile XML, or other secrets. Reports are written only to paths explicitly supplied by the user and are never uploaded automatically. Protect exported files according to the sensitivity of the observed environment.
+Reports can contain IP and MAC addresses, SSIDs, BSSIDs, gateways, DNS topology, hostnames, vendor names, and wireless security metadata. They contain no Wi-Fi passwords, PSKs, credentials, profile XML, or other secrets. Reports are written only to paths explicitly supplied by the user and are never uploaded automatically. `--anonymize` pseudonymizes direct identifiers with per-export aliases for safer sharing without claiming complete statistical anonymity. Protect exported files according to the sensitivity of the observed environment.
 
 The Wi-Fi commands do not retrieve profile XML, collect credentials, connect to networks, or modify wireless state.
 
@@ -91,6 +92,8 @@ Nearby Wi-Fi is observational. An SSID or BSSID observed without association doe
 Device discovery reports observed hosts, not an authoritative list of clients connected to a router. Firewalls, client isolation, sleeping devices, and stale or incomplete neighbor state can limit visibility. IPv6 neighbor entries can be observed, but WLANScope does not sweep IPv6 address space.
 
 PTR names and vendor names are optional enrichment and may be unavailable. Vendor lookup performs no online request during discovery. WLANScope can read an IEEE public MA-L CSV export from `%LOCALAPPDATA%\WLANScope\data\oui.csv` when the file contains the `Registry`, `Assignment`, and `Organization Name` columns. No OUI registry is bundled because WLANScope does not assert redistribution rights for the upstream dataset. This milestone supports 24-bit MA-L assignments only.
+
+The same local registry can attribute observed AP BSSIDs when they use globally administered addresses. Nearby AP details also parse advertised WPS metadata passively from bounded beacon/probe Information Elements; WLANScope does not retrieve a WPS PIN or perform WPS attacks.
 
 ## Architecture direction
 

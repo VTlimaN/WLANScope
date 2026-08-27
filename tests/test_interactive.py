@@ -635,7 +635,7 @@ def test_reports_dual_format_use_one_snapshot(tmp_path: Path) -> None:
     markdown_path = tmp_path / "report.md"
 
     exit_code, output, _, _ = run_session(
-        ["6", "3", str(json_path), str(markdown_path), "0", "0"],
+        ["6", "3", str(json_path), str(markdown_path), "2", "0", "0"],
         use_cases(full_scan=full_scan),
     )
 
@@ -644,6 +644,22 @@ def test_reports_dual_format_use_one_snapshot(tmp_path: Path) -> None:
     assert json_path.exists()
     assert markdown_path.exists()
     assert "Report written" in output
+
+
+def test_reports_offer_explicit_anonymization_choice(tmp_path: Path) -> None:
+    full_scan = ReturningUseCase(sample_snapshot())
+    target = tmp_path / "report.json"
+
+    exit_code, output, _, _ = run_session(
+        ["6", "1", str(target), "1", "0", "0"],
+        use_cases(full_scan=full_scan),
+    )
+
+    assert exit_code == 0
+    assert full_scan.calls == 1
+    assert "Anonymize report identifiers?" in output
+    assert '"anonymized": true' in target.read_text(encoding="utf-8")
+    assert "Anonymized" in output
 
 
 def test_reports_conflicting_paths_are_rejected_before_scan(tmp_path: Path) -> None:
@@ -665,7 +681,7 @@ def test_report_overwrite_requires_confirmation(tmp_path: Path) -> None:
     target.write_text("original", encoding="utf-8")
 
     exit_code, _, errors, _ = run_session(
-        ["6", "1", str(target), "invalid", "0", "0", "0"], use_cases()
+        ["6", "1", str(target), "2", "invalid", "0", "0", "0"], use_cases()
     )
 
     assert exit_code == 0
@@ -680,7 +696,7 @@ def test_report_overwrite_confirmation_reuses_snapshot(tmp_path: Path) -> None:
     full_scan = ReturningUseCase(sample_snapshot())
 
     exit_code, _, _, _ = run_session(
-        ["6", "1", str(target), "1", "0", "0"], use_cases(full_scan=full_scan)
+        ["6", "1", str(target), "2", "1", "0", "0"], use_cases(full_scan=full_scan)
     )
 
     assert exit_code == 0
@@ -691,7 +707,7 @@ def test_report_overwrite_confirmation_reuses_snapshot(tmp_path: Path) -> None:
 def test_report_missing_parent_does_not_end_session(tmp_path: Path) -> None:
     target = tmp_path / "missing" / "report.md"
 
-    exit_code, output, errors, _ = run_session(["6", "2", str(target), "0", "7", "0", "0"])
+    exit_code, output, errors, _ = run_session(["6", "2", str(target), "2", "0", "7", "0", "0"])
 
     assert exit_code == 0
     assert "parent directory does not exist" in errors

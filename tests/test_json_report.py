@@ -38,7 +38,16 @@ def test_json_contract_has_independent_schema_and_tool_version() -> None:
 
     assert report["schema_version"] == REPORT_SCHEMA_VERSION == "1.0"
     assert report["tool"] == {"name": "WLANScope", "version": __version__}
-    assert tuple(report) == ("schema_version", "tool", "scan", "sections", "data", "issues")
+    assert report["anonymized"] is False
+    assert tuple(report) == (
+        "schema_version",
+        "anonymized",
+        "tool",
+        "scan",
+        "sections",
+        "data",
+        "issues",
+    )
 
 
 def test_json_serializes_utc_timing_and_global_status() -> None:
@@ -85,6 +94,19 @@ def test_json_maps_ip_routes_wifi_and_devices_explicitly() -> None:
         "icmp_response",
         "neighbor_cache",
     ]
+
+
+def test_json_reports_access_point_vendor_and_wps_metadata() -> None:
+    report = parse_report()
+    access_point = at(report, "data", "nearby_wifi", "networks", 0, "access_points", 0)
+
+    assert at(access_point, "vendor", "state") == "resolved"
+    assert at(access_point, "vendor", "value") == "Example Network"
+    assert at(access_point, "wps", "presence") == "present"
+    assert at(access_point, "wps", "state") == 2
+    assert at(access_point, "wps", "ap_setup_locked") is True
+    assert at(access_point, "wps", "selected_registrar") is False
+    assert at(access_point, "wps", "config_methods") == ["Push Button"]
 
 
 def test_json_preserves_utf8_ssid_as_display_and_raw_hex() -> None:

@@ -24,6 +24,7 @@ from wlanscope.domain.wifi import (
     WifiInterfaceSnapshot,
     WifiSsid,
 )
+from wlanscope.reporting.anonymization import ReportAnonymizer
 from wlanscope.version import __version__
 
 REPORT_SCHEMA_VERSION = "1.0"
@@ -35,10 +36,13 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _LOCAL_PATH = re.compile(r"(?i)(?:[a-z]:\\|\\\\)[^\s\"']+")
 
 
-def serialize_json_report(snapshot: FullNetworkSnapshot) -> str:
+def serialize_json_report(
+    snapshot: FullNetworkSnapshot,
+    anonymizer: ReportAnonymizer | None = None,
+) -> str:
     return (
         json.dumps(
-            build_json_report(snapshot),
+            build_json_report(snapshot, anonymizer),
             ensure_ascii=False,
             indent=2,
         )
@@ -46,9 +50,13 @@ def serialize_json_report(snapshot: FullNetworkSnapshot) -> str:
     )
 
 
-def build_json_report(snapshot: FullNetworkSnapshot) -> dict[str, JsonValue]:
+def build_json_report(
+    snapshot: FullNetworkSnapshot,
+    anonymizer: ReportAnonymizer | None = None,
+) -> dict[str, JsonValue]:
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
+        "anonymized": anonymizer is not None,
         "tool": {"name": "WLANScope", "version": __version__},
         "scan": {
             "started_at": _timestamp(snapshot.started_at),
@@ -59,49 +67,64 @@ def build_json_report(snapshot: FullNetworkSnapshot) -> dict[str, JsonValue]:
         "sections": {
             result.section.name.lower(): {
                 "status": result.status.name.lower(),
-                "issues": [_issue(issue.message) for issue in result.issues],
+                "issues": [_issue(issue.message, anonymizer) for issue in result.issues],
             }
             for result in snapshot.sections
         },
         "data": {
-            "interfaces": _interfaces(snapshot),
-            "current_wifi": _current_wifi(snapshot),
-            "current_network": _current_network(snapshot),
-            "nearby_wifi": _nearby_wifi(snapshot),
-            "devices": _devices(snapshot),
+            "interfaces": _interfaces(snapshot, anonymizer),
+            "current_wifi": _current_wifi(snapshot, anonymizer),
+            "current_network": _current_network(snapshot, anonymizer),
+            "nearby_wifi": _nearby_wifi(snapshot, anonymizer),
+            "devices": _devices(snapshot, anonymizer),
         },
         "issues": [
             {
                 "section": issue.section.name.lower(),
-                "message": _issue(issue.message),
+                "message": _issue(issue.message, anonymizer),
             }
             for issue in snapshot.issues
         ],
     }
 
 
-def _interfaces(snapshot: FullNetworkSnapshot) -> JsonValue:
+def _interfaces(snapshot: FullNetworkSnapshot, anonymizer: ReportAnonymizer | None) -> JsonValue:
     if snapshot.interfaces is None:
         return None
     return {
-        "warnings": [_issue(message) for message in snapshot.interfaces.warnings],
-        "items": [_interface(item) for item in snapshot.interfaces.interfaces],
+        "warnings": [_issue(message, anonymizer) for message in snapshot.interfaces.warnings],
+        "items": [_interface(item, anonymizer) for item in snapshot.interfaces.interfaces],
     }
 
 
-def _interface(item: NetworkInterface) -> dict[str, JsonValue]:
+def _interface(
+    item: NetworkInterface,
+    anonymizer: ReportAnonymizer | None,
+) -> dict[str, JsonValue]:
     return {
         "interface_index": item.interface_index,
-        "stable_id": _text(item.stable_id),
-        "alias": _text(item.alias),
-        "friendly_name": _text(item.friendly_name),
-        "description": _optional_text(item.description),
+        "stable_id": anonymizer.identifier(item.stable_id) if anonymizer else _text(item.stable_id),
+        "alias": anonymizer.interface(item.alias) if anonymizer else _text(item.alias),
+        "friendly_name": (
+            anonymizer.interface(item.friendly_name) if anonymizer else _text(item.friendly_name)
+        ),
+        "description": (
+            anonymizer.interface(item.description)
+            if anonymizer and item.description is not None
+            else _optional_text(item.description)
+        ),
         "windows_interface_type": item.windows_interface_type,
         "kind": _enum(item.kind),
         "operational_state": _enum(item.operational_state),
         "administrative_state": _enum(item.administrative_state),
         "media_state": _enum(item.media_state),
-        "mac_address": str(item.mac_address) if item.mac_address else None,
+        "mac_address": (
+            anonymizer.mac(str(item.mac_address))
+            if anonymizer and item.mac_address
+            else str(item.mac_address)
+            if item.mac_address
+            else None
+        ),
         "mtu": item.mtu,
         "receive_link_speed_bps": item.receive_link_speed_bps,
         "transmit_link_speed_bps": item.transmit_link_speed_bps,
@@ -109,7 +132,11 @@ def _interface(item: NetworkInterface) -> dict[str, JsonValue]:
         "is_virtual": item.is_virtual,
         "is_hidden": item.is_hidden,
         "manufacturer": _optional_text(item.manufacturer),
-        "driver_description": _optional_text(item.driver_description),
+        "driver_description": (
+            anonymizer.interface(item.driver_description)
+            if anonymizer and item.driver_description is not None
+            else _optional_text(item.driver_description)
+        ),
         "driver_version": _optional_text(item.driver_version),
         "statistics": (
             {
@@ -134,7 +161,11 @@ def _interface(item: NetworkInterface) -> dict[str, JsonValue]:
             {
                 "connector_present": item.hardware.connector_present,
                 "driver_date": _optional_text(item.hardware.driver_date),
-                "device_id": _optional_text(item.hardware.device_id),
+                "device_id": (
+                    anonymizer.identifier(item.hardware.device_id)
+                    if anonymizer and item.hardware.device_id is not None
+                    else _optional_text(item.hardware.device_id)
+                ),
             }
             if item.hardware
             else None
@@ -142,31 +173,44 @@ def _interface(item: NetworkInterface) -> dict[str, JsonValue]:
     }
 
 
-def _current_wifi(snapshot: FullNetworkSnapshot) -> JsonValue:
+def _current_wifi(snapshot: FullNetworkSnapshot, anonymizer: ReportAnonymizer | None) -> JsonValue:
     if snapshot.current_wifi is None:
         return None
     return {
-        "interfaces": [_wifi_interface(item) for item in snapshot.current_wifi.interfaces],
+        "interfaces": [
+            _wifi_interface(item, anonymizer) for item in snapshot.current_wifi.interfaces
+        ],
         "issues": [
             {
                 "code": issue.code.name.lower(),
-                "message": _issue(issue.message),
-                "interface_id": issue.interface_id,
+                "message": _issue(issue.message, anonymizer),
+                "interface_id": (
+                    anonymizer.identifier(issue.interface_id)
+                    if anonymizer and issue.interface_id
+                    else issue.interface_id
+                ),
             }
             for issue in snapshot.current_wifi.issues
         ],
     }
 
 
-def _wifi_interface(item: WifiInterfaceSnapshot) -> dict[str, JsonValue]:
+def _wifi_interface(
+    item: WifiInterfaceSnapshot,
+    anonymizer: ReportAnonymizer | None,
+) -> dict[str, JsonValue]:
     return {
-        "interface_id": item.interface_id,
-        "description": _text(item.description),
+        "interface_id": anonymizer.identifier(item.interface_id)
+        if anonymizer
+        else item.interface_id,
+        "description": anonymizer.interface(item.description)
+        if anonymizer
+        else _text(item.description),
         "state": _native(item.state),
         "network_interface_index": (
             item.network_interface.interface_index if item.network_interface else None
         ),
-        "connection": _wifi_connection(item.connection) if item.connection else None,
+        "connection": (_wifi_connection(item.connection, anonymizer) if item.connection else None),
         "provenance": item.provenance,
         "channel_number": item.channel_number,
         "rssi_dbm": item.rssi_dbm,
@@ -226,14 +270,21 @@ def _wifi_interface(item: WifiInterfaceSnapshot) -> dict[str, JsonValue]:
     }
 
 
-def _wifi_connection(item: WifiConnection) -> dict[str, JsonValue]:
+def _wifi_connection(
+    item: WifiConnection,
+    anonymizer: ReportAnonymizer | None,
+) -> dict[str, JsonValue]:
     return {
         "state": _native(item.state),
         "mode": _native(item.mode),
         "bss_type": _native(item.bss_type) if item.bss_type is not None else None,
-        "profile_name": _optional_text(item.profile_name),
-        "ssid": _ssid(item.ssid),
-        "bssid": str(item.bssid),
+        "profile_name": (
+            anonymizer.profile(item.profile_name)
+            if anonymizer and item.profile_name is not None
+            else _optional_text(item.profile_name)
+        ),
+        "ssid": _ssid(item.ssid, anonymizer),
+        "bssid": anonymizer.bssid(str(item.bssid)) if anonymizer else str(item.bssid),
         "phy_type": _native(item.phy_type),
         "signal_quality_percent": item.signal_quality,
         "receive_rate_kbps": item.receive_rate_kbps,
@@ -259,27 +310,45 @@ def _auth_cipher_capabilities(item: WifiAuthCipherCapabilities) -> dict[str, Jso
     }
 
 
-def _current_network(snapshot: FullNetworkSnapshot) -> JsonValue:
+def _current_network(
+    snapshot: FullNetworkSnapshot,
+    anonymizer: ReportAnonymizer | None,
+) -> JsonValue:
     if snapshot.current_network is None:
         return None
     return {
-        "interfaces": [_network_context(item) for item in snapshot.current_network.interfaces],
-        "routes": [_route(item) for item in snapshot.current_network.routes],
+        "interfaces": [
+            _network_context(item, anonymizer) for item in snapshot.current_network.interfaces
+        ],
+        "routes": [_route(item, anonymizer) for item in snapshot.current_network.routes],
         "issues": [
-            {"source": issue.source.name.lower(), "message": _issue(issue.message)}
+            {
+                "source": issue.source.name.lower(),
+                "message": _issue(issue.message, anonymizer),
+            }
             for issue in snapshot.current_network.issues
         ],
     }
 
 
-def _network_context(item: InterfaceNetworkContext) -> dict[str, JsonValue]:
+def _network_context(
+    item: InterfaceNetworkContext,
+    anonymizer: ReportAnonymizer | None,
+) -> dict[str, JsonValue]:
     return {
         "interface_index": item.interface_index,
-        "addresses": [_assignment(address) for address in item.addresses],
+        "addresses": [_assignment(address, anonymizer) for address in item.addresses],
         "dns": (
             {
-                "servers": [str(server) for server in item.dns.servers],
-                "suffix": _optional_text(item.dns.suffix),
+                "servers": [
+                    anonymizer.ip(server) if anonymizer else str(server)
+                    for server in item.dns.servers
+                ],
+                "suffix": (
+                    anonymizer.domain(item.dns.suffix)
+                    if anonymizer and item.dns.suffix is not None
+                    else _optional_text(item.dns.suffix)
+                ),
                 "registration_enabled": item.dns.registration_enabled,
                 "suffix_registration_enabled": item.dns.suffix_registration_enabled,
                 "provenance": item.dns.provenance,
@@ -290,7 +359,13 @@ def _network_context(item: InterfaceNetworkContext) -> dict[str, JsonValue]:
         "dhcp": {
             "ipv4_state": _enum(item.dhcp.ipv4_state),
             "ipv6_state": _enum(item.dhcp.ipv6_state),
-            "server": str(item.dhcp.server) if item.dhcp.server else None,
+            "server": (
+                anonymizer.ip(item.dhcp.server)
+                if anonymizer and item.dhcp.server
+                else str(item.dhcp.server)
+                if item.dhcp.server
+                else None
+            ),
             "lease_obtained": (
                 _timestamp(item.dhcp.lease_obtained) if item.dhcp.lease_obtained else None
             ),
@@ -301,8 +376,16 @@ def _network_context(item: InterfaceNetworkContext) -> dict[str, JsonValue]:
         },
         "profile": (
             {
-                "name": _optional_text(item.profile.name),
-                "interface_alias": _optional_text(item.profile.interface_alias),
+                "name": (
+                    anonymizer.profile(item.profile.name)
+                    if anonymizer and item.profile.name is not None
+                    else _optional_text(item.profile.name)
+                ),
+                "interface_alias": (
+                    anonymizer.interface(item.profile.interface_alias)
+                    if anonymizer and item.profile.interface_alias is not None
+                    else _optional_text(item.profile.interface_alias)
+                ),
                 "category": _optional_text(item.profile.category),
                 "ipv4_connectivity": _enum(item.profile.ipv4_connectivity),
                 "ipv6_connectivity": _enum(item.profile.ipv6_connectivity),
@@ -312,18 +395,31 @@ def _network_context(item: InterfaceNetworkContext) -> dict[str, JsonValue]:
             else None
         ),
         "network_interface_id": (
-            _text(item.network_interface.stable_id) if item.network_interface else None
+            anonymizer.identifier(item.network_interface.stable_id)
+            if anonymizer and item.network_interface
+            else _text(item.network_interface.stable_id)
+            if item.network_interface
+            else None
         ),
-        "wifi_interface_id": item.wifi_interface.interface_id if item.wifi_interface else None,
+        "wifi_interface_id": (
+            anonymizer.identifier(item.wifi_interface.interface_id)
+            if anonymizer and item.wifi_interface
+            else item.wifi_interface.interface_id
+            if item.wifi_interface
+            else None
+        ),
     }
 
 
-def _assignment(item: IpAddressAssignment) -> dict[str, JsonValue]:
+def _assignment(
+    item: IpAddressAssignment,
+    anonymizer: ReportAnonymizer | None,
+) -> dict[str, JsonValue]:
     return {
-        "address": str(item.address),
+        "address": anonymizer.ip(item.address) if anonymizer else str(item.address),
         "address_family": _address_family(item.address),
         "prefix_length": item.prefix_length,
-        "network": str(item.network),
+        "network": anonymizer.ip(item.network) if anonymizer else str(item.network),
         "interface_index": item.interface_index,
         "prefix_origin": _native(item.prefix_origin),
         "address_origin": _native(item.address_origin),
@@ -336,11 +432,11 @@ def _assignment(item: IpAddressAssignment) -> dict[str, JsonValue]:
     }
 
 
-def _route(item: Route) -> dict[str, JsonValue]:
+def _route(item: Route, anonymizer: ReportAnonymizer | None) -> dict[str, JsonValue]:
     return {
-        "destination": str(item.destination),
+        "destination": anonymizer.ip(item.destination) if anonymizer else str(item.destination),
         "address_family": f"ipv{item.destination.version}",
-        "next_hop": str(item.next_hop),
+        "next_hop": anonymizer.ip(item.next_hop) if anonymizer else str(item.next_hop),
         "next_hop_scope_id": item.next_hop_scope_id,
         "interface_index": item.interface_index,
         "route_metric": item.route_metric,
@@ -353,33 +449,59 @@ def _route(item: Route) -> dict[str, JsonValue]:
     }
 
 
-def _nearby_wifi(snapshot: FullNetworkSnapshot) -> JsonValue:
+def _nearby_wifi(snapshot: FullNetworkSnapshot, anonymizer: ReportAnonymizer | None) -> JsonValue:
     if snapshot.nearby_wifi is None:
         return None
     return {
         "interfaces": [
-            {"interface_id": item.interface_id, "description": _text(item.description)}
+            {
+                "interface_id": (
+                    anonymizer.identifier(item.interface_id) if anonymizer else item.interface_id
+                ),
+                "description": (
+                    anonymizer.interface(item.description)
+                    if anonymizer
+                    else _text(item.description)
+                ),
+            }
             for item in snapshot.nearby_wifi.interfaces
         ],
-        "networks": [_wifi_network(item) for item in snapshot.nearby_wifi.networks],
+        "networks": [_wifi_network(item, anonymizer) for item in snapshot.nearby_wifi.networks],
         "issues": [
             {
                 "code": issue.code.name.lower(),
-                "message": _issue(issue.message),
-                "interface_id": issue.interface_id,
+                "message": _issue(issue.message, anonymizer),
+                "interface_id": (
+                    anonymizer.identifier(issue.interface_id)
+                    if anonymizer and issue.interface_id
+                    else issue.interface_id
+                ),
             }
             for issue in snapshot.nearby_wifi.issues
         ],
     }
 
 
-def _wifi_network(item: WifiNetwork) -> dict[str, JsonValue]:
+def _wifi_network(
+    item: WifiNetwork,
+    anonymizer: ReportAnonymizer | None,
+) -> dict[str, JsonValue]:
     return {
-        "interface_id": item.interface_id,
-        "interface_description": _text(item.interface_description),
-        "ssid": _ssid(item.ssid),
+        "interface_id": anonymizer.identifier(item.interface_id)
+        if anonymizer
+        else item.interface_id,
+        "interface_description": (
+            anonymizer.interface(item.interface_description)
+            if anonymizer
+            else _text(item.interface_description)
+        ),
+        "ssid": _ssid(item.ssid, anonymizer),
         "connectable": item.connectable,
-        "profile_name": _optional_text(item.profile_name),
+        "profile_name": (
+            anonymizer.profile(item.profile_name)
+            if anonymizer and item.profile_name is not None
+            else _optional_text(item.profile_name)
+        ),
         "signal_quality_percent": item.signal_quality,
         "security_enabled": item.security_enabled,
         "authentication": _native(item.authentication),
@@ -389,15 +511,27 @@ def _wifi_network(item: WifiNetwork) -> dict[str, JsonValue]:
         "bss_type": item.bss_type,
         "not_connectable_reason": item.not_connectable_reason,
         "supported_phy_types": [_native(phy) for phy in item.supported_phy_types],
-        "access_points": [_access_point(access_point) for access_point in item.access_points],
+        "access_points": [
+            _access_point(access_point, anonymizer) for access_point in item.access_points
+        ],
     }
 
 
-def _access_point(item: WifiAccessPoint) -> dict[str, JsonValue]:
+def _access_point(
+    item: WifiAccessPoint,
+    anonymizer: ReportAnonymizer | None,
+) -> dict[str, JsonValue]:
     return {
-        "interface_id": item.interface_id,
-        "ssid": _ssid(item.ssid),
-        "bssid": str(item.bssid),
+        "interface_id": anonymizer.identifier(item.interface_id)
+        if anonymizer
+        else item.interface_id,
+        "ssid": _ssid(item.ssid, anonymizer),
+        "bssid": anonymizer.bssid(str(item.bssid)) if anonymizer else str(item.bssid),
+        "vendor": {
+            "state": _enum(item.vendor.state),
+            "value": _optional_text(item.vendor.vendor),
+            "source": _enum(item.vendor.source) if item.vendor.source else None,
+        },
         "phy_type": _native(item.phy_type),
         "signal_quality_percent": item.signal_quality,
         "rssi_dbm": item.rssi_dbm,
@@ -417,11 +551,12 @@ def _access_point(item: WifiAccessPoint) -> dict[str, JsonValue]:
         "basic_rates_mbps": list(item.basic_rates_mbps),
         "capability_flags": list(item.capability_flags),
         "information_elements": _information_elements(item),
+        "wps": _wps(item, anonymizer),
         "provenance": item.provenance,
     }
 
 
-def _devices(snapshot: FullNetworkSnapshot) -> JsonValue:
+def _devices(snapshot: FullNetworkSnapshot, anonymizer: ReportAnonymizer | None) -> JsonValue:
     if snapshot.devices is None:
         return None
     inventory = snapshot.devices
@@ -429,9 +564,13 @@ def _devices(snapshot: FullNetworkSnapshot) -> JsonValue:
     return {
         "discovery": {
             "interface_index": plan.interface_index,
-            "subnet": str(plan.subnet),
-            "local_addresses": [str(item) for item in plan.local_addresses],
-            "gateways": [str(item) for item in plan.gateways],
+            "subnet": anonymizer.ip(plan.subnet) if anonymizer else str(plan.subnet),
+            "local_addresses": [
+                anonymizer.ip(item) if anonymizer else str(item) for item in plan.local_addresses
+            ],
+            "gateways": [
+                anonymizer.ip(item) if anonymizer else str(item) for item in plan.gateways
+            ],
             "usable_host_count": plan.usable_host_count,
             "targets_considered": len(plan.targets),
             "timeout_ms": plan.timeout_ms,
@@ -439,27 +578,39 @@ def _devices(snapshot: FullNetworkSnapshot) -> JsonValue:
             "probes_executed": inventory.discovered.probes_executed,
             "canceled": inventory.discovered.canceled,
             "issues": [
-                {"stage": _text(issue.stage), "message": _issue(issue.message)}
+                {
+                    "stage": _text(issue.stage),
+                    "message": _issue(issue.message, anonymizer),
+                }
                 for issue in inventory.discovered.issues
             ],
         },
-        "hosts": [_host(item) for item in inventory.hosts],
+        "hosts": [_host(item, anonymizer) for item in inventory.hosts],
         "enrichment_issues": [
-            {"source": _text(issue.source), "message": _issue(issue.message)}
+            {
+                "source": _text(issue.source),
+                "message": _issue(issue.message, anonymizer),
+            }
             for issue in inventory.issues
         ],
     }
 
 
-def _host(item: EnrichedHost) -> dict[str, JsonValue]:
+def _host(item: EnrichedHost, anonymizer: ReportAnonymizer | None) -> dict[str, JsonValue]:
     discovered = item.discovered
     sources: list[JsonValue] = []
     sources.extend(sorted(source.name.lower() for source in discovered.sources))
     return {
         "interface_index": discovered.interface_index,
-        "address": str(discovered.address),
+        "address": anonymizer.ip(discovered.address) if anonymizer else str(discovered.address),
         "address_family": _address_family(discovered.address),
-        "mac_address": str(discovered.mac_address) if discovered.mac_address else None,
+        "mac_address": (
+            anonymizer.mac(str(discovered.mac_address))
+            if anonymizer and discovered.mac_address
+            else str(discovered.mac_address)
+            if discovered.mac_address
+            else None
+        ),
         "reachability": _enum(discovered.reachability),
         "discovery_sources": sources,
         "neighbor_state": _neighbor_state(discovered.neighbor_state),
@@ -470,7 +621,11 @@ def _host(item: EnrichedHost) -> dict[str, JsonValue]:
         ),
         "hostname": {
             "state": _enum(item.hostname.state),
-            "value": _optional_text(item.hostname.hostname),
+            "value": (
+                anonymizer.hostname(item.hostname.hostname)
+                if anonymizer and item.hostname.hostname is not None
+                else _optional_text(item.hostname.hostname)
+            ),
             "source": _enum(item.hostname.source) if item.hostname.source else None,
         },
         "vendor": {
@@ -513,11 +668,46 @@ def _information_elements(item: WifiAccessPoint) -> dict[str, JsonValue]:
     }
 
 
-def _ssid(item: WifiSsid) -> dict[str, JsonValue]:
+def _wps(
+    item: WifiAccessPoint,
+    anonymizer: ReportAnonymizer | None,
+) -> dict[str, JsonValue]:
+    wps = item.information_elements.wps
     return {
-        "display": _text(item.display_text) if not item.is_empty else "<Hidden>",
-        "raw_hex": item.raw.hex(),
-        "hidden": item.is_empty,
+        "presence": _enum(wps.presence),
+        "ie_count": wps.ie_count,
+        "parse_status": _enum(wps.parse_status) if wps.parse_status else None,
+        "version": wps.version,
+        "state": wps.state,
+        "ap_setup_locked": wps.ap_setup_locked,
+        "selected_registrar": wps.selected_registrar,
+        "device_password_id": wps.device_password_id,
+        "config_methods": list(wps.config_methods),
+        "config_methods_raw": wps.config_methods_raw,
+        "config_methods_unknown_bits": wps.config_methods_unknown_bits,
+        "manufacturer": _optional_text(wps.manufacturer),
+        "model_name": _optional_text(wps.model_name),
+        "model_number": _optional_text(wps.model_number),
+        "device_name": (
+            anonymizer.identifier(wps.device_name)
+            if anonymizer and wps.device_name is not None
+            else _optional_text(wps.device_name)
+        ),
+    }
+
+
+def _ssid(item: WifiSsid, anonymizer: ReportAnonymizer | None) -> dict[str, JsonValue]:
+    hidden = item.is_empty
+    return {
+        "display": (
+            "<Hidden>"
+            if hidden
+            else anonymizer.ssid(item.display_text)
+            if anonymizer
+            else _text(item.display_text)
+        ),
+        "raw_hex": None if anonymizer and not hidden else item.raw.hex(),
+        "hidden": hidden,
     }
 
 
@@ -559,5 +749,8 @@ def _text(value: str) -> str:
     return _CONTROL.sub("", _ANSI_ESCAPE.sub("", value))
 
 
-def _issue(value: str) -> str:
-    return _LOCAL_PATH.sub("<local-path>", _text(value))
+def _issue(value: str, anonymizer: ReportAnonymizer | None = None) -> str:
+    cleaned = _text(value)
+    if anonymizer is not None:
+        return anonymizer.sanitize_text(cleaned)
+    return _LOCAL_PATH.sub("<local-path>", cleaned)

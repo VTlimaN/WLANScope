@@ -49,10 +49,13 @@ The following limitations define the planned v1 scope:
 - Local IPv4 ranges with more than 256 usable addresses require explicit authorization, and ranges above 4,096 are refused in v1.0.
 - PTR records are optional, can be absent or stale, and identify DNS names rather than NetBIOS, mDNS, LLMNR, or DHCP names.
 - Vendor enrichment requires a user-provided local IEEE MA-L CSV registry. The project does not bundle the registry, and the local copy can be absent, incomplete, or outdated.
+- AP vendor attribution uses that same local registry and is unavailable when the registry cannot be loaded. Locally administered BSSIDs are not attributed to a global organization.
 - The current vendor lookup covers 24-bit MA-L assignments only. Unknown prefixes and valid assignments of other sizes remain unavailable.
 - Locally administered and randomized MAC addresses are deliberately not attributed to a global organization.
 - An OUI organization identifies an address assignment holder; it does not prove device type, model, operating system, ownership, or current manufacturer.
 - Neighbor-cache router indication, self status, gateway status, hostname, and vendor are role evidence only. WLANScope does not convert them into a guessed device type.
 - WLANScope will not provide offensive wireless operations, credential access, exploitation, packet manipulation, or access-control bypass.
+- WPS metadata depends on the Information Elements present in the observed beacon or probe response. Absence in one snapshot does not establish historical behavior or all configuration state.
+- Report anonymization removes direct identifiers selected by the report contract but does not guarantee statistical anonymity from retained technical facts or relationships.
 
 These constraints will be presented with scan results where they materially affect interpretation.

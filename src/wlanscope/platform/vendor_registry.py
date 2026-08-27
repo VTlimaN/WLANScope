@@ -13,6 +13,8 @@ from wlanscope.domain.enrichment import (
     VendorResolutionState,
 )
 from wlanscope.domain.interfaces import MacAddress
+from wlanscope.domain.nearby_wifi import WifiAccessPointVendor
+from wlanscope.domain.wifi import WifiBssid
 
 REGISTRY_COLUMNS = frozenset({"Registry", "Assignment", "Organization Name"})
 
@@ -39,6 +41,27 @@ class LocalOuiVendorResolver:
                 f"Local OUI registry could not be loaded: {error}",
             )
         return VendorResolutionBatch(tuple(_resolve_vendor(host, registry) for host in hosts))
+
+    def resolve_bssids(
+        self,
+        bssids: Sequence[WifiBssid],
+    ) -> tuple[WifiAccessPointVendor, ...]:
+        path = self._registry_path or default_registry_path()
+        if path is None or not path.is_file():
+            return tuple(_without_ap_registry(bssid) for bssid in bssids)
+        try:
+            registry = load_ieee_ma_l_registry(path)
+        except (OSError, UnicodeError, VendorRegistryError):
+            return tuple(_without_ap_registry(bssid) for bssid in bssids)
+        cache: dict[bytes, WifiAccessPointVendor] = {}
+        results: list[WifiAccessPointVendor] = []
+        for bssid in bssids:
+            resolution = cache.get(bssid.octets)
+            if resolution is None:
+                resolution = _resolve_bssid(bssid, registry)
+                cache[bssid.octets] = resolution
+            results.append(resolution)
+        return tuple(results)
 
 
 def default_registry_path() -> Path | None:
@@ -137,3 +160,25 @@ def _mac_state(mac_address: MacAddress | None) -> VendorResolutionState | None:
     if first_octet & 2:
         return VendorResolutionState.LOCALLY_ADMINISTERED
     return None
+
+
+def _resolve_bssid(
+    bssid: WifiBssid,
+    registry: dict[bytes, str],
+) -> WifiAccessPointVendor:
+    if bssid.octets[0] & 0x03:
+        return WifiAccessPointVendor(VendorResolutionState.NOT_APPLICABLE)
+    vendor = registry.get(bssid.octets[:3])
+    if vendor is None:
+        return WifiAccessPointVendor(VendorResolutionState.UNKNOWN)
+    return WifiAccessPointVendor(
+        VendorResolutionState.RESOLVED,
+        vendor,
+        EnrichmentSource.LOCAL_OUI_REGISTRY,
+    )
+
+
+def _without_ap_registry(bssid: WifiBssid) -> WifiAccessPointVendor:
+    if bssid.octets[0] & 0x03:
+        return WifiAccessPointVendor(VendorResolutionState.NOT_APPLICABLE)
+    return WifiAccessPointVendor(VendorResolutionState.REGISTRY_UNAVAILABLE)

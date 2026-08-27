@@ -46,7 +46,7 @@ def create_inspect_current_network() -> InspectCurrentNetwork:
 
 
 def create_scan_nearby_wifi() -> ScanNearbyWifi:
-    return ScanNearbyWifi(NativeNearbyWifiCollector())
+    return ScanNearbyWifi(NativeNearbyWifiCollector(), LocalOuiVendorResolver())
 
 
 def create_discover_local_devices(

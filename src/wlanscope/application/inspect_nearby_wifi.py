@@ -5,6 +5,7 @@ from wlanscope.domain.nearby_wifi import (
     WifiAccessPoint,
     WifiBand,
     WifiNetwork,
+    WifiWpsPresence,
 )
 from wlanscope.domain.wifi import WifiPhyType
 
@@ -56,6 +57,13 @@ class NearbyWifiNetworkDetails:
         return max(
             (access_point.signal_quality for access_point in self.network.access_points),
             default=None,
+        )
+
+    @property
+    def wps_observed_count(self) -> int:
+        return sum(
+            item.information_elements.wps.presence is WifiWpsPresence.PRESENT
+            for item in self.network.access_points
         )
 
 
