@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wlanscope"
-version = "0.1.0.dev0"
+version = "1.0.0"
 description = "Windows Wireless & Network Reconnaissance"
 readme = "README.md"
 requires-python = ">=3.12"
