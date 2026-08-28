@@ -16,6 +16,7 @@ from wlanscope.presentation.components import (
 )
 from wlanscope.presentation.formatting import (
     LayoutMode,
+    SafeText,
     format_bool,
     format_bytes,
     format_duration,
@@ -26,6 +27,7 @@ from wlanscope.presentation.formatting import (
     format_timestamp,
     layout_mode,
     literal_text,
+    sanitize_terminal_text,
 )
 from wlanscope.presentation.theme import STATUS_STYLES, WLANSCOPE_THEME
 
@@ -34,6 +36,7 @@ __all__ = (
     "WLANSCOPE_THEME",
     "Branding",
     "LayoutMode",
+    "SafeText",
     "create_about_identity",
     "create_branding",
     "create_data_table",
@@ -55,4 +58,5 @@ __all__ = (
     "layout_mode",
     "literal_text",
     "navigation_text",
+    "sanitize_terminal_text",
 )

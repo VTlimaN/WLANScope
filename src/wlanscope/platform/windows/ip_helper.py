@@ -38,6 +38,8 @@ MAX_ADAPTER_BUFFER_ATTEMPTS = 3
 IF_MAX_STRING_SIZE = 256
 IF_MAX_PHYS_ADDRESS_LENGTH = 32
 MAX_ADAPTER_ADDRESS_LENGTH = 8
+MAX_INTERFACE_COUNT = 65_536
+MAX_ADAPTER_COUNT = 4_096
 MAX_LINKED_ADDRESS_COUNT = 1024
 IP_ADAPTER_DHCP_ENABLED = 0x0004
 
@@ -239,6 +241,8 @@ class NativeIpHelperBackend:
 
         try:
             entry_count = int(table_pointer.contents.NumEntries)
+            if entry_count > MAX_INTERFACE_COUNT:
+                raise WindowsApiError("GetIfTable2", 13)
             first_row_address = ctypes.addressof(table_pointer.contents.Table)
             row_size = ctypes.sizeof(_MibIfRow2)
             return tuple(
@@ -390,7 +394,11 @@ def _convert_interface_row(row: _MibIfRow2) -> InterfaceRow:
 def _convert_adapter_list(first_adapter_address: int) -> tuple[AdapterAddressRecord, ...]:
     adapters: list[AdapterAddressRecord] = []
     current_address: int | None = first_adapter_address
+    visited_addresses: set[int] = set()
     while current_address is not None:
+        if current_address in visited_addresses or len(adapters) >= MAX_ADAPTER_COUNT:
+            raise WindowsApiError("GetAdaptersAddresses", 13)
+        visited_addresses.add(current_address)
         adapter = ctypes.cast(
             ctypes.c_void_p(current_address),
             ctypes.POINTER(_IpAdapterAddresses),
@@ -490,9 +498,14 @@ def _optional_text(value: str | None) -> str | None:
 def _convert_linked_addresses(first_address: int | None) -> tuple[IPv4Address | IPv6Address, ...]:
     addresses: list[IPv4Address | IPv6Address] = []
     current_address = first_address
+    visited_addresses: set[int] = set()
     while current_address:
-        if len(addresses) >= MAX_LINKED_ADDRESS_COUNT:
+        if (
+            current_address in visited_addresses
+            or len(visited_addresses) >= MAX_LINKED_ADDRESS_COUNT
+        ):
             raise WindowsApiError("GetAdaptersAddresses", 13)
+        visited_addresses.add(current_address)
         header = ctypes.cast(current_address, ctypes.POINTER(_AdapterDnsAddress)).contents
         parsed = _convert_socket_address(header.Address)
         if parsed is not None:

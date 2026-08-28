@@ -7,12 +7,15 @@ from wlanscope.domain.full_scan import FullNetworkSnapshot
 from wlanscope.domain.nearby_wifi import WifiNetwork, WifiProtectedSetupDetails, WifiWpsPresence
 from wlanscope.domain.wifi import WifiAuthCipherCapabilities, WifiSsid
 from wlanscope.reporting.anonymization import ReportAnonymizer
-from wlanscope.reporting.json_report import REPORT_SCHEMA_VERSION
+from wlanscope.reporting.json_report import REPORT_SCHEMA_VERSION, build_json_report
 from wlanscope.version import __version__
 
 _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_LOCAL_PATH = re.compile(r"(?i)(?:[a-z]:\\|\\\\)[^\s\"']+")
+_LOCAL_PATH = re.compile(
+    r"(?i)(?:[\"'](?:[a-z]:\\|\\\\)[^\r\n\"']+[\"']|(?:[a-z]:\\|\\\\)[^\s\"']+)"
+)
+_BIDI_CONTROL = re.compile(r"[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 _MARKDOWN_SPECIAL = frozenset("\\|`*_[]<>")
 
 
@@ -20,6 +23,8 @@ def render_markdown_report(
     snapshot: FullNetworkSnapshot,
     anonymizer: ReportAnonymizer | None = None,
 ) -> str:
+    if anonymizer is not None:
+        build_json_report(snapshot, anonymizer)
     lines = [
         "# WLANScope Network Report",
         "",
@@ -77,6 +82,7 @@ def render_markdown_report(
 
 def escape_markdown(value: str) -> str:
     cleaned = _CONTROL.sub("", _ANSI_ESCAPE.sub("", value)).replace("\r\n", "\n")
+    cleaned = _BIDI_CONTROL.sub(lambda match: f"\\u{ord(match.group()):04x}", cleaned)
     escaped = "".join(
         f"\\{character}" if character in _MARKDOWN_SPECIAL else character for character in cleaned
     )

@@ -3,9 +3,27 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from rich.style import StyleType
 from rich.text import Text
+
+_BIDI_CONTROLS = frozenset(
+    {
+        "\u061c",
+        "\u200e",
+        "\u200f",
+        "\u202a",
+        "\u202b",
+        "\u202c",
+        "\u202d",
+        "\u202e",
+        "\u2066",
+        "\u2067",
+        "\u2068",
+        "\u2069",
+    }
+)
 
 
 class LayoutMode(Enum):
@@ -22,8 +40,30 @@ def layout_mode(width: int) -> LayoutMode:
     return LayoutMode.WIDE
 
 
+class SafeText(Text):
+    def __init__(self, text: str = "", *args: Any, **kwargs: Any) -> None:
+        super().__init__(sanitize_terminal_text(text), *args, **kwargs)
+
+
 def literal_text(value: object, style: StyleType | None = None) -> Text:
-    return Text(str(value)) if style is None else Text(str(value), style=style)
+    safe_value = sanitize_terminal_text(str(value))
+    return SafeText(safe_value) if style is None else SafeText(safe_value, style=style)
+
+
+def sanitize_terminal_text(value: str) -> str:
+    return "".join(
+        _visible_escape(character)
+        if ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F or character in _BIDI_CONTROLS
+        else character
+        for character in value
+    )
+
+
+def _visible_escape(character: str) -> str:
+    value = ord(character)
+    if value <= 0xFF:
+        return f"\\x{value:02x}"
+    return f"\\u{value:04x}"
 
 
 def format_optional(value: object | None, unavailable: str = "Unavailable") -> str:

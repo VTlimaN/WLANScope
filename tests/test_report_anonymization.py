@@ -202,6 +202,42 @@ def test_issue_text_sanitizes_embedded_ipv6_address() -> None:
     assert sanitized == "lookup failed for IPV6-001"
 
 
+def test_alias_never_equals_the_original_identifier() -> None:
+    anonymizer = ReportAnonymizer()
+
+    assert anonymizer.ssid("WIFI-001") == "WIFI-002"
+
+
+def test_finalized_aliases_do_not_collide_with_other_identifier_categories() -> None:
+    anonymizer = ReportAnonymizer()
+    anonymizer.hostname("internal-host")
+    anonymizer.ssid("HOST-001")
+
+    anonymizer.finalize_aliases()
+
+    assert anonymizer.hostname("internal-host") != "HOST-001"
+    assert anonymizer.hostname("internal-host") != anonymizer.ssid("HOST-001")
+
+
+def test_issue_text_replaces_registered_identifier_inside_message() -> None:
+    anonymizer = ReportAnonymizer()
+    alias = anonymizer.interface("SecretAdapter")
+
+    assert anonymizer.sanitize_text("Failure on adapter SecretAdapter") == (
+        f"Failure on adapter {alias}"
+    )
+
+
+def test_issue_text_sanitizes_windows_path_containing_spaces() -> None:
+    anonymizer = ReportAnonymizer()
+
+    sanitized = anonymizer.sanitize_text(
+        "Failed at 'C:\\Users\\Example User\\Private\\report.json'"
+    )
+
+    assert sanitized == "Failed at PATH-001"
+
+
 def test_normal_report_preserves_identifiers_and_false_metadata() -> None:
     snapshot = sanitized_fixture()
     json_text = serialize_json_report(snapshot)

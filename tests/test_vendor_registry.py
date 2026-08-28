@@ -144,6 +144,29 @@ def test_non_ma_l_rows_are_ignored(tmp_path: Path) -> None:
     assert load_ieee_ma_l_registry(registry_path) == {}
 
 
+def test_oversized_registry_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry_path = tmp_path / "oui.csv"
+    write_registry(registry_path, ["MA-L,001122,Example Networks"])
+    monkeypatch.setattr(vendor_registry, "MAX_REGISTRY_FILE_SIZE", 16)
+
+    with pytest.raises(VendorRegistryError, match="file-size limit"):
+        load_ieee_ma_l_registry(registry_path)
+
+
+def test_oversized_organization_name_is_rejected(tmp_path: Path) -> None:
+    registry_path = tmp_path / "oui.csv"
+    write_registry(
+        registry_path,
+        [f"MA-L,001122,{'x' * (vendor_registry.MAX_ORGANIZATION_NAME_LENGTH + 1)}"],
+    )
+
+    with pytest.raises(VendorRegistryError, match="organization name"):
+        load_ieee_ma_l_registry(registry_path)
+
+
 def test_ap_bssid_vendor_states_reuse_local_registry(tmp_path: Path) -> None:
     registry_path = tmp_path / "oui.csv"
     write_registry(registry_path, ["MA-L,001122,Example Networks"])

@@ -15,6 +15,7 @@ from wlanscope.presentation import (
     format_timestamp,
     layout_mode,
     literal_text,
+    sanitize_terminal_text,
 )
 
 
@@ -84,3 +85,10 @@ def test_literal_text_preserves_markup_like_content() -> None:
     assert isinstance(rendered, Text)
     assert rendered.plain == value
     assert rendered.spans == []
+
+
+def test_terminal_text_neutralizes_controls_and_bidi_without_stripping_unicode() -> None:
+    value = "Wi-Fi São Paulo \x1b[2J\nspoofed\u202e"
+
+    assert sanitize_terminal_text(value) == ("Wi-Fi São Paulo \\x1b[2J\\x0aspoofed\\u202e")
+    assert literal_text(value).plain == "Wi-Fi São Paulo \\x1b[2J\\x0aspoofed\\u202e"

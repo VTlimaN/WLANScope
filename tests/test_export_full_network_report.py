@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -90,6 +91,15 @@ def test_same_output_path_is_rejected_before_serialization() -> None:
 
     assert not json_serializer.snapshots
     assert not markdown.snapshots
+
+
+def test_existing_hardlink_output_paths_are_rejected(tmp_path: Path) -> None:
+    first = tmp_path / "report.json"
+    second = tmp_path / "report.md"
+    first.write_text("existing", encoding="utf-8")
+    os.link(first, second)
+
+    assert paths_conflict(first, second)
 
 
 def test_one_write_failure_is_preserved() -> None:

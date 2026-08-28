@@ -6,7 +6,7 @@ from threading import Event
 
 from rich.console import Console, RenderableType
 from rich.table import Table
-from rich.text import Text
+from rich.text import Text as RichText
 
 from wlanscope.application.discover_local_devices import DiscoverLocalDevices
 from wlanscope.application.enrich_device_inventory import EnrichDeviceInventory
@@ -74,6 +74,9 @@ from wlanscope.presentation import (
     format_frequency,
     format_rate,
     layout_mode,
+)
+from wlanscope.presentation import (
+    SafeText as Text,
 )
 from wlanscope.presentation.rendering import (
     create_full_scan_issues,
@@ -260,7 +263,7 @@ def main(
             stdout_is_tty if stdout_is_tty is not None else output.is_terminal
         )
         if not interactive:
-            output.print(Text(parser.format_help()), end="")
+            output.print(RichText(parser.format_help()), end="")
             return 0
         return _run_interactive(
             interface_use_case or _create_interface_use_case(),

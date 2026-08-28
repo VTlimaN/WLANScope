@@ -7,7 +7,6 @@ from threading import Event
 
 from rich.console import Console, RenderableType
 from rich.table import Table
-from rich.text import Text
 
 from wlanscope.application.discover_local_devices import DiscoverLocalDevices
 from wlanscope.application.enrich_device_inventory import EnrichDeviceInventory
@@ -43,6 +42,9 @@ from wlanscope.domain.network import (
     NetworkCollectionError,
 )
 from wlanscope.domain.wifi import CurrentWifiSnapshot, WifiCollectionError, WifiInterfaceSnapshot
+from wlanscope.presentation import (
+    SafeText as Text,
+)
 from wlanscope.presentation import (
     create_about_identity,
     create_branding,

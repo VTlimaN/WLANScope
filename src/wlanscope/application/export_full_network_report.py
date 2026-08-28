@@ -82,6 +82,15 @@ class ExportFullNetworkReport:
 def paths_conflict(json_path: Path | None, markdown_path: Path | None) -> bool:
     if json_path is None or markdown_path is None:
         return False
-    json_key = os.path.normcase(os.path.abspath(json_path))
-    markdown_key = os.path.normcase(os.path.abspath(markdown_path))
+    try:
+        if (
+            json_path.exists()
+            and markdown_path.exists()
+            and os.path.samefile(json_path, markdown_path)
+        ):
+            return True
+    except OSError:
+        pass
+    json_key = os.path.normcase(str(json_path.resolve(strict=False)))
+    markdown_key = os.path.normcase(str(markdown_path.resolve(strict=False)))
     return json_key == markdown_key

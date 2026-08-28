@@ -69,6 +69,15 @@ def test_malformed_rsn_is_marked_without_crashing() -> None:
     assert summary.malformed
 
 
+def test_unsupported_rsn_version_is_rejected() -> None:
+    rsn = bytes.fromhex("0200 000fac04 0100 000fac04 0100 000fac08")
+
+    summary = parse_information_elements(bytes((48, len(rsn))) + rsn)
+
+    assert summary.rsn is None
+    assert summary.malformed
+
+
 def test_unknown_rsn_suites_are_preserved_as_selectors() -> None:
     rsn = bytes.fromhex("0100 00112209 0100 00112208 0100 00112207")
     summary = parse_information_elements(bytes((48, len(rsn))) + rsn)

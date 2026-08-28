@@ -33,7 +33,10 @@ type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
 
 _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_LOCAL_PATH = re.compile(r"(?i)(?:[a-z]:\\|\\\\)[^\s\"']+")
+_LOCAL_PATH = re.compile(
+    r"(?i)(?:[\"'](?:[a-z]:\\|\\\\)[^\r\n\"']+[\"']|(?:[a-z]:\\|\\\\)[^\s\"']+)"
+)
+_BIDI_CONTROL = re.compile(r"[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 
 def serialize_json_report(
@@ -54,6 +57,23 @@ def build_json_report(
     snapshot: FullNetworkSnapshot,
     anonymizer: ReportAnonymizer | None = None,
 ) -> dict[str, JsonValue]:
+    if anonymizer is not None:
+        _build_json_report(snapshot, anonymizer)
+        anonymizer.finalize_aliases()
+    return _build_json_report(snapshot, anonymizer)
+
+
+def _build_json_report(
+    snapshot: FullNetworkSnapshot,
+    anonymizer: ReportAnonymizer | None,
+) -> dict[str, JsonValue]:
+    data: dict[str, JsonValue] = {
+        "interfaces": _interfaces(snapshot, anonymizer),
+        "current_wifi": _current_wifi(snapshot, anonymizer),
+        "current_network": _current_network(snapshot, anonymizer),
+        "nearby_wifi": _nearby_wifi(snapshot, anonymizer),
+        "devices": _devices(snapshot, anonymizer),
+    }
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
         "anonymized": anonymizer is not None,
@@ -71,13 +91,7 @@ def build_json_report(
             }
             for result in snapshot.sections
         },
-        "data": {
-            "interfaces": _interfaces(snapshot, anonymizer),
-            "current_wifi": _current_wifi(snapshot, anonymizer),
-            "current_network": _current_network(snapshot, anonymizer),
-            "nearby_wifi": _nearby_wifi(snapshot, anonymizer),
-            "devices": _devices(snapshot, anonymizer),
-        },
+        "data": data,
         "issues": [
             {
                 "section": issue.section.name.lower(),
@@ -746,7 +760,8 @@ def _optional_text(value: str | None) -> str | None:
 
 
 def _text(value: str) -> str:
-    return _CONTROL.sub("", _ANSI_ESCAPE.sub("", value))
+    cleaned = _CONTROL.sub("", _ANSI_ESCAPE.sub("", value))
+    return _BIDI_CONTROL.sub(lambda match: f"\\u{ord(match.group()):04x}", cleaned)
 
 
 def _issue(value: str, anonymizer: ReportAnonymizer | None = None) -> str:

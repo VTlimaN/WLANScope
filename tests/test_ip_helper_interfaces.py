@@ -11,10 +11,13 @@ from wlanscope.domain.interfaces import (
 from wlanscope.platform.windows.ip_helper import (
     AdapterAddressRecord,
     InterfaceRow,
+    WindowsApiError,
     WindowsInterfaceCollector,
     _AdapterDnsAddress,
+    _convert_adapter_list,
     _convert_linked_addresses,
     _convert_socket_address,
+    _IpAdapterAddresses,
     _MibIfRow2,
     _SocketAddress,
     combine_ip_helper_records,
@@ -49,6 +52,22 @@ def test_converts_linked_dns_addresses_in_source_order() -> None:
     assert first_buffer.raw
     assert second_buffer.raw
     assert [str(address) for address in addresses] == ["192.0.2.53", "198.51.100.53"]
+
+
+def test_rejects_cycle_in_linked_dns_addresses() -> None:
+    entry = _AdapterDnsAddress()
+    entry.Next = ctypes.addressof(entry)
+
+    with pytest.raises(WindowsApiError):
+        _convert_linked_addresses(ctypes.addressof(entry))
+
+
+def test_rejects_cycle_in_adapter_list() -> None:
+    adapter = _IpAdapterAddresses()
+    adapter.Next = ctypes.pointer(adapter)
+
+    with pytest.raises(WindowsApiError):
+        _convert_adapter_list(ctypes.addressof(adapter))
 
 
 def _socket_address(

@@ -10,7 +10,9 @@ _GUID = re.compile(
     r"(?i)(?<![0-9a-f])\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
     r"[0-9a-f]{4}-[0-9a-f]{12}\}?(?![0-9a-f])"
 )
-_LOCAL_PATH = re.compile(r"(?i)(?:[a-z]:\\|\\\\)[^\s\"']+")
+_LOCAL_PATH = re.compile(
+    r"(?i)(?:[\"'](?:[a-z]:\\|\\\\)[^\r\n\"']+[\"']|(?:[a-z]:\\|\\\\)[^\s\"']+)"
+)
 
 
 class ReportAnonymizer:
@@ -54,11 +56,35 @@ class ReportAnonymizer:
         return self._alias("DOMAIN", value)
 
     def sanitize_text(self, value: str) -> str:
-        sanitized = _LOCAL_PATH.sub(lambda match: self._alias("PATH", match.group()), value)
+        sanitized = value
+        known_values = (
+            (original, alias)
+            for mapping in self._mappings.values()
+            for original, alias in mapping.items()
+        )
+        for original, alias in sorted(known_values, key=lambda item: len(item[0]), reverse=True):
+            sanitized = re.sub(re.escape(original), alias, sanitized, flags=re.IGNORECASE)
+        sanitized = _LOCAL_PATH.sub(lambda match: self._alias("PATH", match.group()), sanitized)
         sanitized = _GUID.sub(lambda match: self.identifier(match.group()), sanitized)
         sanitized = _MAC.sub(lambda match: self.mac(match.group()), sanitized)
         sanitized = _IPV4.sub(lambda match: self.ipv4(match.group()), sanitized)
         return _IPV6_CANDIDATE.sub(self._sanitize_ipv6_candidate, sanitized)
+
+    def finalize_aliases(self) -> None:
+        originals = {
+            original.casefold() for mapping in self._mappings.values() for original in mapping
+        }
+        used: set[str] = set()
+        for category, mapping in self._mappings.items():
+            index = 1
+            for original in mapping:
+                alias = f"{category}-{index:03d}"
+                while alias.casefold() in originals or alias.casefold() in used:
+                    index += 1
+                    alias = f"{category}-{index:03d}"
+                mapping[original] = alias
+                used.add(alias.casefold())
+                index += 1
 
     def _sanitize_ipv6_candidate(self, match: re.Match[str]) -> str:
         candidate = match.group()
@@ -72,6 +98,16 @@ class ReportAnonymizer:
         mapping = self._mappings.setdefault(category, {})
         alias = mapping.get(value)
         if alias is None:
-            alias = f"{category}-{len(mapping) + 1:03d}"
+            reserved = {
+                item.casefold()
+                for existing in self._mappings.values()
+                for item in (*existing.keys(), *existing.values())
+            }
+            reserved.add(value.casefold())
+            index = 1
+            alias = f"{category}-{index:03d}"
+            while alias.casefold() in reserved:
+                index += 1
+                alias = f"{category}-{index:03d}"
             mapping[value] = alias
         return alias

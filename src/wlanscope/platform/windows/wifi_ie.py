@@ -301,6 +301,8 @@ def _parse_rsn(payload: bytes) -> WifiRsnDetails | None:
         return None
     offset = 0
     version, offset = _u16(payload, offset)
+    if version != 1:
+        return None
     group, offset = _suite(payload, offset, "cipher")
     pairwise_count, offset = _u16(payload, offset)
     pairwise, offset = _suites(payload, offset, pairwise_count, "cipher")

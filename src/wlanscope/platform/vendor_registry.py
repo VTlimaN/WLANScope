@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -17,6 +18,9 @@ from wlanscope.domain.nearby_wifi import WifiAccessPointVendor
 from wlanscope.domain.wifi import WifiBssid
 
 REGISTRY_COLUMNS = frozenset({"Registry", "Assignment", "Organization Name"})
+MAX_REGISTRY_FILE_SIZE = 32 * 1024 * 1024
+MAX_REGISTRY_ROWS = 1_000_000
+MAX_ORGANIZATION_NAME_LENGTH = 512
 
 
 class VendorRegistryError(RuntimeError):
@@ -72,18 +76,26 @@ def default_registry_path() -> Path | None:
 
 
 def load_ieee_ma_l_registry(path: Path) -> dict[bytes, str]:
-    with path.open("r", encoding="utf-8-sig", newline="") as source:
+    with path.open("rb") as source:
+        raw = source.read(MAX_REGISTRY_FILE_SIZE + 1)
+    if len(raw) > MAX_REGISTRY_FILE_SIZE:
+        raise VendorRegistryError("Registry exceeds the supported file-size limit")
+    with io.StringIO(raw.decode("utf-8-sig"), newline="") as source:
         reader = csv.DictReader(source)
         if reader.fieldnames is None or not set(reader.fieldnames) >= REGISTRY_COLUMNS:
             raise VendorRegistryError("Registry header does not match the IEEE MA-L CSV format")
         registry: dict[bytes, str] = {}
-        for row in reader:
+        for row_number, row in enumerate(reader, start=1):
+            if row_number > MAX_REGISTRY_ROWS:
+                raise VendorRegistryError("Registry exceeds the supported row limit")
             if row["Registry"].strip().upper() != "MA-L":
                 continue
             prefix = _parse_assignment(row["Assignment"])
             organization = row["Organization Name"].strip()
             if not organization:
                 raise VendorRegistryError("Registry contains an empty organization name")
+            if len(organization) > MAX_ORGANIZATION_NAME_LENGTH:
+                raise VendorRegistryError("Registry contains an oversized organization name")
             if prefix in registry:
                 raise VendorRegistryError("Registry contains a duplicate MA-L assignment")
             registry[prefix] = organization
