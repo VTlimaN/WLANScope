@@ -1,73 +1,74 @@
 # Security
 
-## Authorized use
+## Security Model
 
-WLANScope is designed for defensive visibility, network inventory, diagnostics, Blue Team workflows, and security engineering on systems and networks owned by the user or covered by explicit authorization.
+WLANScope is a defensive, endpoint-local inspection tool. It prefers structured Windows APIs, preserves operating-system privacy decisions, confines active observation to bounded ICMP Echo probes on the selected routed local subnet, and represents unavailable sources explicitly.
 
-Users are responsible for obtaining authorization and complying with applicable policies and laws before collecting network information.
+The application does not request global Administrator access for convenience, auto-elevate, weaken execution policy, or bypass Windows location consent. Privacy settings, policy, Windows build, or driver support can deny individual sources; independent sources continue where possible.
 
-## Privilege model
+Unexpected programming errors are not globally suppressed. Expected operational failures become source-aware issues, partial results, or documented exit codes.
 
-The application will collect the maximum useful information available to a normal Windows user. It will not request global Administrator access for convenience, autoelevate, or weaken operating-system controls. A collector that lacks permission will report that limitation and allow independent work to continue.
+## What WLANScope Does
 
-Windows location consent is distinct from Administrator access. WLANScope will respect location privacy decisions and will not attempt to bypass them.
+- Reads local interface, address, route, DNS, DHCP, network-profile, and neighbor information.
+- Inspects current Wi-Fi association, capabilities, radio state, and cumulative statistics when exposed by Windows.
+- Requests a Windows-managed nearby Wi-Fi scan and observes available-network, BSS, beacon, and probe-response metadata.
+- Parses selected 802.11 Information Elements with strict buffer and length bounds.
+- Observes hosts on the routed local IPv4 subnet through self, gateway, neighbor-cache, and bounded ICMP evidence.
+- Includes IPv6 neighbors already reported by Windows without sweeping IPv6 address space.
+- Attempts PTR resolution only for already-observed hosts.
+- Performs optional vendor attribution from a user-provided local IEEE MA-L CSV registry.
+- Generates local JSON and Markdown reports only at user-supplied paths.
+- Optionally pseudonymizes supported direct report identifiers for safer sharing.
 
-The current Wi-Fi command reads non-secret profile and connection metadata through the Native WLAN API. An access-denied result is reported without falling back to a mechanism intended to evade Windows privacy controls.
+Nearby Wi-Fi scanning is observational. It does not associate with observed networks or reveal their private IP configuration.
 
-Nearby Wi-Fi discovery is passive, read-only observation after a Windows-managed scan request. It does not bypass location restrictions, deauthenticate clients, connect or disconnect networks, modify profiles, or request profile key material.
+## Passive Wireless Analysis
 
-Beacon and probe-response information elements are attacker-controlled input. WLANScope copies them only after validating the native BSS buffer bounds, caps their size, parses them without recursion or execution, tolerates malformed elements, and persists only selected interpreted metadata rather than full raw blobs.
+Beacon and probe-response Information Elements are untrusted wireless input. Native BSS bounds, offsets, and sizes are validated before copying. Parsing is bounded, non-recursive, deterministic, malformed-safe, and tolerant of unknown elements. WLANScope stores selected interpreted metadata rather than full raw IE blobs.
 
-WPS handling is passive metadata parsing of advertised vendor Information Elements. It reports factual configuration fields when present and does not retrieve or guess a PIN, generate attack commands, invoke WPS tooling, or label an AP vulnerable merely because WPS is observed.
+WPS data is parsed passively from observed management-frame metadata supplied by the Windows WLAN stack. WLANScope can report factual advertised fields such as WPS state, setup-lock status, selected registrar, configuration methods, and device metadata. It does not retrieve or guess a PIN, brute-force WPS, execute Pixie Dust, invoke Reaver, generate attack commands, or classify an AP as vulnerable merely because WPS is present.
 
-Current network analysis is read-only. WLANScope does not create or remove addresses or routes, change metrics or DNS servers, renew DHCP leases, or modify adapter configuration.
+AP/BSSID vendor attribution reuses the same optional local IEEE MA-L registry as observed-device enrichment. The registry is read locally and never downloaded or queried through a remote API during collection. Locally administered BSSIDs are not assigned a global vendor.
 
-Optional deep inspection uses only local Native WLAN, IP Helper, NetAdapter, NetConnectionProfile, and CIM data. It performs no public-IP, ISP, geolocation, WHOIS, telemetry, or other external lookup. Adapter statistics are read in batch and no command changes radio, adapter, profile, or advanced-property state.
+Native WLAN and IP Helper handles and buffers remain inside platform adapters and are released on successful and exceptional paths. Structured PowerShell runs without a user profile or shell, uses fixed scripts and timeouts, and does not change execution policy.
 
-Local device discovery is confined to the IPv4 subnet selected from the host's default routing context. It reads the Windows neighbor cache and sends only bounded ICMP Echo requests. It does not accept arbitrary target CIDRs. Ranges above 256 usable addresses require an explicit command-line authorization, and ranges above 4,096 are refused. IPv6 is not swept.
+## Report Data Handling
 
-Device enrichment sends PTR queries only for hosts already observed by local discovery. It does not brute-force DNS names, enumerate zones, use NetBIOS, LLMNR, or mDNS, or initiate service discovery. Vendor lookup reads an optional local registry once per execution and never calls an external MAC service for each host.
+Terminal output and normal reports can contain sensitive local identifiers such as:
 
-The full scan composes only the capabilities already described above. It introduces no new collector or active technique. ICMP remains confined to the routed local subnet and retains the same range authorization policy. Full scan accepts no arbitrary target, performs no port or service scan, collects no secrets, and does not mutate network state.
+- IPv4 and IPv6 addresses and prefixes;
+- MAC addresses, SSIDs, and BSSIDs;
+- interface, profile, route, gateway, DNS, and DHCP information;
+- hostnames, vendor names, observation evidence, and wireless security metadata.
 
-JSON and Markdown reports are created only when the user supplies an output path. They can persist network topology and identifiers including IP addresses, MAC addresses, SSIDs, BSSIDs, gateways, DNS servers, hostnames, vendor names, and security metadata. They never include passwords, PSKs, credentials, profile XML, or key material. WLANScope does not upload, transmit, synchronize, or attach reports automatically.
+Interactive and command views do not persist this data automatically. JSON and Markdown are written only when explicitly requested. Existing destinations are protected unless overwrite is explicit, parent directories must already exist, and final updates use a temporary file followed by an atomic rename or replacement. WLANScope does not configure destination ACLs; access control, retention, and sharing remain the user's responsibility.
 
-Existing files are protected from silent overwrite unless `--force` is explicit. Destination parent directories must already exist, and atomic replacement avoids partially written final files. WLANScope does not manage Windows ACLs; protecting, retaining, and sharing the resulting local files remains the user's responsibility.
+Report anonymization is explicit opt-in pseudonymization of supported direct identifiers. One operation-local mapping is shared when JSON and Markdown are generated together. The original-to-alias mapping is not persisted, and the immutable source snapshot is not modified.
 
-## Prohibited capabilities
+An anonymized report is not a formal guarantee of anonymity. Vendor, radio, timing, count, statistical, status, and relationship data can remain and may support inference. Review sanitized output before public distribution. A normal report retains original identifiers.
 
-WLANScope will not implement:
+Reports do not contain passwords, PSKs, credentials, profile XML, or key material because WLANScope never collects those values. Both report formats consume the same completed `FullNetworkSnapshot` and can preserve partial or failed section status without rerunning collection.
 
-- credential or token extraction;
-- stored PSK or Wi-Fi key extraction;
-- password cracking;
-- deauthentication;
-- evil twin automation;
-- ARP poisoning or man-in-the-middle behavior;
-- packet injection;
-- port or service scanning;
-- exploit automation;
-- persistence or malware behavior;
-- authentication or access-control bypass.
+## What WLANScope Does Not Do
 
-The approved v1 scope also excludes port scanning and service exploitation.
+WLANScope does not implement:
 
-## Sensitive output
+- password, token, credential, Wi-Fi PSK, plaintext profile-key, or profile-XML extraction;
+- password cracking, WPS PIN recovery, WPS attacks, or authentication bypass;
+- deauthentication, evil twin, man-in-the-middle, or ARP-poisoning behavior;
+- packet capture or injection;
+- adapter, route, address, DNS, DHCP, profile, radio, or other network mutation;
+- automated Wi-Fi connection or disconnection;
+- arbitrary CIDR targeting or IPv6 address-space sweeping;
+- port scanning, service discovery, banner grabbing, TTL guessing, or OS fingerprinting;
+- exploit or attack-command automation, persistence, or malware behavior;
+- AP client enumeration for attack planning;
+- public-IP, ISP, last-mile, geolocation, WHOIS, or external MAC-vendor lookup;
+- report upload, synchronization, or transmission.
 
-The adapters, Wi-Fi, and devices commands may display local interface names, MAC addresses, SSIDs, BSSIDs, security metadata, profile names, PTR hostnames, and vendor organizations in the terminal. They do not persist this information automatically and never request profile key material or credentials.
+No ICMP response is interpreted as proof that a host is offline. Host sleep, filtering, client isolation, segmentation, and topology can suppress a response.
 
-Reports may contain internal hostnames, IP addresses, prefixes, gateways, DNS and DHCP servers, MAC addresses, SSIDs, BSSIDs, routes, adapter details, and other infrastructure topology metadata. Users must protect, retain, and share these reports according to their organization's data-handling requirements.
+## Authorized Use
 
-Reports will be created only when explicitly requested and will not contain credentials or Wi-Fi secrets.
-
-An anonymized report pseudonymizes direct identifiers with operation-local aliases and does not store the original-to-alias mapping. Vendor, radio, timing, count, and relationship data can remain, so this feature supports safer sharing but is not a guarantee of complete statistical anonymity.
-
-CLI reliability changes do not expand collection scope, bypass privacy controls, authorize arbitrary targets, or add active network techniques.
-
-The interactive menu composes the same approved use cases and does not expand their authority. Large local ranges still require an explicit action, reports still require user-supplied paths and explicit overwrite confirmation, and navigation never enables background collection or monitoring.
-
-Deep inspection does not add port or service scanning, OS fingerprinting, profile-key access, Wi-Fi connection attempts, packet injection, or network mutation. Vendor-specific wireless elements are not used to guess router models, firmware, vulnerabilities, or exploitability.
-
-## Reporting vulnerabilities
-
-Security vulnerabilities should be reported privately to the project maintainer when a private reporting channel becomes available. Public reports should not include credentials, sensitive network captures, or identifying infrastructure data.
+Use WLANScope only on systems and networks you are authorized to inspect.

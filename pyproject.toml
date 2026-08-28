@@ -12,7 +12,15 @@ license = "Apache-2.0"
 authors = [
     { name = "sasser" },
 ]
-keywords = ["cybersecurity", "network-observability", "windows", "wireless"]
+keywords = [
+    "blue-team",
+    "cybersecurity",
+    "network-analysis",
+    "networking",
+    "wifi",
+    "windows",
+    "wireless",
+]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Environment :: Console",

@@ -1,120 +1,143 @@
 # Architecture
 
-## Implemented architecture
+## System Overview
 
-The project foundation provides packaging, metadata, CLI entry points, tests, build configuration, and continuous integration. Milestones 1 through 8 provide vertical features through four concrete layers:
+WLANScope separates user interaction, presentation, orchestration, data contracts, Windows integration, and reporting. Explicit subcommands and the interactive terminal invoke the same application use cases. Presentation renders completed models; it never collects network data. Reporting consumes a completed full snapshot; it never initiates a scan.
 
-- domain models normalize network-interface, byte-safe current and nearby Wi-Fi, IP assignment, DNS, DHCP, route, neighbor, and discovered-host data;
-- application use cases coordinate interface inventory, stable association, bounded local discovery, device enrichment, partial failures, and deterministic ordering;
-- Windows platform adapters isolate IP Helper, Native WLAN API, PowerShell JSON, and optional CIM boundaries;
-- the CLI renders normalized interface, current Wi-Fi, nearby Wi-Fi, current network, and observed-host views without accessing native sources directly.
-
-M9 provides persistent JSON and Markdown reporting without adding collection behavior.
-
-## Target boundaries
-
-The planned dependency flow is:
-
-```text
-CLI / Interactive
-  -> Presentation
-  -> Application
-    -> Domain
-    -> Windows platform adapters
-    -> Discovery
-    -> Reporting
+```mermaid
+flowchart LR
+    CLI[Command CLI] --> APP[Application]
+    TUI[Interactive] --> APP
+    CLI --> PRES[Presentation]
+    TUI --> PRES
+    APP --> DOMAIN[Immutable Domain]
+    APP --> PLATFORM[Platform Adapters]
+    PLATFORM --> WIN[Windows APIs]
+    PLATFORM --> LOCAL[Local Enrichment]
+    APP --> SNAP[Snapshots]
+    SNAP --> PRES
+    SNAP --> REPORT[Reporting]
+    REPORT --> JSON[JSON]
+    REPORT --> MD[Markdown]
 ```
 
-The domain will not depend on subprocesses, PowerShell, Windows APIs, terminal rendering, or report formats. Application services will coordinate use cases. Windows-specific adapters will collect external data and normalize it at the platform boundary. Discovery will implement bounded defensive observation. Reporting will serialize completed snapshots without initiating collection.
+## Architectural Boundaries
 
-Directories are added only when a milestone has real code to place in them. The current protocols are narrow boundaries consumed by the interface use case and its tests, not a general dependency injection framework.
+| Boundary | Responsibility | Explicitly excluded |
+| --- | --- | --- |
+| CLI | `argparse` definitions, command dispatch, exit codes, and composition. | Native collection details and domain inference. |
+| Interactive | Navigation, selection, refresh, cancellation, and use-case invocation. | New collection techniques and background monitoring. |
+| Presentation | Theme, branding, formatting, literal-safe Rich components, and adaptive rendering. | Collection, Windows APIs, use-case execution, and domain mutation. |
+| Application | Use-case orchestration, association, deterministic ordering, optional enrichment, partial outcomes, and snapshot reuse. | Native pointer ownership and terminal rendering. |
+| Domain | Immutable, platform-independent models, enums, validation, and pure policies. | Subprocesses, Windows APIs, Rich, and report formats. |
+| Platform | Native bindings, structured operating-system sources, wireless parsing, local enrichment, timeouts, normalization, and resource cleanup. | CLI navigation and report writing. |
+| Reporting | Explicit JSON/Markdown rendering, per-export pseudonymization, and atomic local file writing. | Scanning, platform access, and snapshot mutation. |
 
-## Data source policy
+Dependencies point inward toward domain contracts. Platform adapters return copied Python values and immutable models; raw pointers, API handles, and PowerShell transport data do not escape their owning boundary.
 
-M1 uses `GetIfTable2` and `GetAdaptersAddresses` from IP Helper as primary structured sources. Their native records are copied into Python values before leaving the platform adapter. `Get-NetAdapter -IncludeHidden` supplies optional manufacturer, driver, hidden, and virtual metadata through explicitly selected properties serialized with `ConvertTo-Json`.
+## Entry Points and Presentation
 
-M2 uses `WlanOpenHandle`, `WlanEnumInterfaces`, and `WlanQueryInterface` from the Native WLAN API. Handles are closed and API-allocated buffers are released on both successful and exceptional paths. SSIDs retain their explicit byte length and raw bytes; terminal-safe text is derived separately. Current WLAN interfaces are associated with M1 interfaces only by a matching stable GUID.
+`wlanscope.cli` owns the command hierarchy and creates concrete use cases through `wlanscope.composition`. Explicit subcommands are deterministic and suitable for redirected output. The root command starts `InteractiveSession` only when both stdin and stdout are terminals; otherwise it prints help without prompting or clearing.
 
-M3 uses `GetUnicastIpAddressTable` and `GetIpForwardTable2` for primary IPv4/IPv6 assignments and routes. `GetAdaptersAddresses` supplies structured DNS ordering, interface metrics, DNS suffixes, DHCP state, and DHCP server data. Every MIB table is released with `FreeMibTable`. PowerShell networking cmdlets provide structured JSON fallback data, while `Win32_NetworkAdapterConfiguration` is isolated as optional DHCP enrichment.
+`wlanscope.presentation` is a narrow rendering package:
 
-Default gateways are derived only from `0.0.0.0/0` and `::/0` routes. Route and interface metrics remain separate; their sum is exposed only when both components are known. Concurrent defaults, including VPN routes, are preserved and preference remains unknown when metrics are missing or tied.
+- `theme.py` defines semantic Rich styles and status mapping.
+- `formatting.py` provides pure value formatting and compact, standard, and wide breakpoints.
+- `components.py` owns literal-safe tables, headers, menus, notices, and empty states.
+- `rendering.py` owns specialized current-network and full-scan compositions.
+- `branding.py` owns root identity, creator/version metadata, and the static privacy note.
 
-M4 reuses the Native WLAN handle and interface enumeration boundaries, requests scans with `WlanScan`, and waits for interface-specific ACM completion or failure notifications registered through `WlanRegisterNotification`. Registration is removed on successful, failed, and timed-out paths, and every wait has a fixed upper bound. `WlanGetAvailableNetworkList` supplies aggregate network and security metadata while `WlanGetNetworkBssList` supplies distinct access-point observations. Both API-owned lists are released with `WlanFreeMemory`.
+External strings such as SSIDs, adapter names, profiles, hostnames, vendors, issue messages, and paths become literal Rich text before rendering. Trusted labels and semantic styles remain explicit UI content. Screen clearing is gated by interactive execution, terminal detection, and an injectable test flag.
 
-Available networks and BSS observations remain separate until application orchestration groups them by byte-safe SSID and stable WLAN interface identity. Exact duplicate observations use a deterministic identity that includes interface, SSID, BSSID, and center frequency. Frequency remains stored in kHz; pure domain functions derive band and a channel only for recognized 2.4, 5, and 6 GHz frequencies.
+## Application and Snapshot Flow
 
-M5 adds a pure application selection service over `NearbyWifiSnapshot`. One-based network and access-point indices refer only to the deterministic ordering within that snapshot, so hidden or duplicate SSIDs and observations from multiple interfaces remain unambiguous. Detail presentation receives the existing snapshot and never invokes the scanner. Opening network or BSS details therefore cannot combine observations from different scans.
+Application services preserve one observation set as data moves through related views and stages:
 
-The CLI exposes explicit `--details` and `--access-point` selectors. It does not prompt automatically, which keeps redirected and non-TTY execution deterministic. Network summaries, BSS counts, aggregate signal, observed signal, radio metadata, and individual BSS properties remain presentation concerns rather than new collection paths.
+1. Interface inventory is collected once and reused to associate current Wi-Fi and current-network snapshots.
+2. A nearby Wi-Fi scan produces one `NearbyWifiSnapshot`; network and AP detail selections operate on it without rescanning.
+3. Deduplicated AP observations are enriched as one BSSID batch through the existing local OUI resolver.
+4. Device discovery consumes current routing context and produces one observed-host inventory; hostname and vendor enrichment wraps those hosts without selecting new targets.
+5. `RunFullNetworkScan` executes interfaces, current Wi-Fi, current network, nearby Wi-Fi, device discovery, and enrichment sequentially, forwarding dependent results.
+6. JSON and Markdown exporters consume the same `FullNetworkSnapshot`, so requesting both formats does not run a second scan.
 
-M6 consumes the preferred IPv4 routing context from M3 and chooses a subnet only when the default route, interface, preferred address, and prefix provide an unambiguous result. Range cardinality is checked before targets are materialized. Up to 256 usable addresses are allowed by default, ranges through 4,096 require `--allow-large-range`, and larger ranges are refused.
+Interactive detail views retain their current snapshot. Only an explicit Refresh invokes the relevant use case again. A full scan is point-in-time but not atomic: sections are observed sequentially and the network can change between them.
 
-`GetIpNetTable2` captures IPv4 ARP and IPv6 Neighbor Discovery state before and after active probing, with API-owned memory released through `FreeMibTable`. IPv4 Echo probes use `IcmpCreateFile`, synchronous `IcmpSendEcho2` calls with a 750 ms bound, and `IcmpCloseHandle`. A bounded `ThreadPoolExecutor` uses at most 32 workers. IPv6 is never enumerated for probing.
+`FullNetworkSnapshot` contains timezone-aware UTC start and completion timestamps, immutable section snapshots, ordered section results, source-aware issues, and a derived overall status. Independent source failure does not erase useful results. Unknown PTR names, unknown vendors, or unavailable optional registries are normal enrichment outcomes.
 
-Host identity is the interface and IP pair. Merge policy preserves self, gateway, neighbor-cache, and ICMP-response provenance independently, enriches a known host with a later MAC observation, and never treats ICMP silence as proof that a host is offline. Failures in a neighbor snapshot or ICMP boundary retain other evidence as a partial inventory.
+## Windows Data Sources
 
-M7 runs only after M6 has produced its observed-host inventory. `EnrichDeviceInventory` wraps each unchanged discovered host with independent hostname and vendor outcomes; it never selects targets or invokes discovery. PTR queries use dnspython with a 750 ms per-query timeout, a 1.5 second lifetime, and at most 16 concurrent workers. IPv4 and already-observed IPv6 addresses are eligible. No PTR, timeout, and resolver failure remain distinct, and only systemic resolver failure produces a global issue.
+### Native WLAN API
 
-Vendor lookup is local and optional. One IEEE public MA-L CSV export is loaded once per execution from the user data directory, and only validated 24-bit assignments participate in lookup. The project does not bundle or update the registry because upstream redistribution rights were not sufficiently explicit for repository inclusion. Missing registries and unknown prefixes are normal per-host outcomes; malformed registries are systemic issues. Locally administered, multicast, absent, and invalid MAC addresses are never attributed to a global vendor. Discovery provenance and enrichment provenance use separate types.
+Native WLAN supplies interface enumeration, current association, connection attributes, radio and capability data, cumulative WLAN statistics, available networks, and BSS observations. Nearby scans use `WlanScan` and wait for interface-specific completion or failure notifications with a fixed timeout.
 
-M8 adds `RunFullNetworkScan`, a sequential application orchestrator over the existing M1 through M7 use cases. Execution order is adapters, current Wi-Fi, current network, nearby Wi-Fi, local devices, then device enrichment. M5 detail selection is not invoked because the nearby snapshot already contains the summary data required by the full scan.
+WLAN handles are closed and API-owned buffers are released on success and failure. SSIDs retain explicit byte length and raw bytes; safe display text is derived separately. Current WLAN interfaces associate with interface inventory only through stable GUID identity.
 
-Results flow forward within one execution. M1 interfaces are supplied to M2 association, M1 and M2 snapshots are supplied to M3 association, the M3 snapshot is supplied to M6 planning, and the single M6 inventory is supplied to M7. Nearby Wi-Fi, device discovery, and enrichment therefore each run once. The standalone commands retain their original collection defaults.
+### IP Helper and ICMP APIs
 
-`FullNetworkSnapshot` preserves the existing domain snapshots, timezone-aware UTC start and completion times, ordered section results, section-scoped issues, and a derived global status. Independent operational failures do not abort later independent stages. A device stage is skipped when current network context or a usable authorized subnet is unavailable. Unknown PTR and vendor outcomes remain normal and do not degrade status.
+IP Helper supplies interface rows, adapter addresses, IPv4 and IPv6 assignments, routes, metrics, DNS ordering, DHCP state, and IPv4/IPv6 neighbor information. Native tables are copied before `FreeMibTable` releases them.
 
-M9 introduces a one-way reporting boundary from `FullNetworkSnapshot` to explicit schema mapping or Markdown rendering and then to local file writing. Reporting modules depend only on domain models and package metadata; they do not import collectors, Windows platform modules, or `RunFullNetworkScan`. The CLI runs one full scan and passes the same immutable snapshot to every requested serializer.
+Device discovery derives one local IPv4 subnet from preferred routing context. Cardinality is validated before targets are materialized: up to 256 usable addresses are allowed by default, 257 through 4,096 require explicit authorization, and larger ranges are refused. The discovery boundary combines neighbor observations with synchronous `IcmpSendEcho2` calls bounded to 750 ms and at most 32 workers. IPv6 address space is never enumerated for probing.
 
-JSON schema version `1.0` is independent of the package version. Mapping is deliberate rather than reflective, timestamps are normalized to UTC, and SSIDs preserve both safe display text and raw hexadecimal bytes. Markdown uses fixed sections and escapes external values before table or inline rendering. Both serializers are deterministic for the same snapshot.
+### Structured PowerShell and CIM
 
-Report writing uses UTF-8 temporary files in the destination directory, flushes and synchronizes content, and atomically renames or replaces the destination. Existing files are refused by default, `--force` enables replacement, missing parent directories are not created, and temporary files are removed after failures.
+Fixed, non-interactive PowerShell scripts select explicit properties and serialize them with `ConvertTo-Json`; localized formatted tables are never parsed. Sources include NetAdapter identity and driver metadata, adapter statistics, network profiles, DNS and interface enrichment, and optional CIM DHCP lease timestamps.
 
-M10 keeps argparse and the existing command hierarchy while making the presentation boundary explicit. Normal results render to standard output; expected operational failures, partial-result warnings, policy guidance, and cancellation notices render to standard error. An injected console remains supported for deterministic offline tests, while real non-TTY execution disables interactive behavior and does not rely on ANSI styling.
+PowerShell runs without a user profile or shell, does not alter execution policy, and has a fixed timeout. These sources are optional enrichment: unavailable PowerShell or CIM data cannot erase primary Native WLAN or IP Helper results.
 
-Long-running device, full-scan, and nearby Wi-Fi scan flows normalize user cancellation to exit code 130 without hiding unexpected programming errors. Compact tables retain essential columns below 100 terminal columns and omit only secondary presentation fields; domain snapshots and reports remain complete and unchanged.
+## Local Enrichment
 
-M10.5 adds an interactive presentation layer behind the root command. `InteractiveSession` receives the existing M1 through M9 use cases as an explicit immutable bundle and never imports Windows platform adapters, ctypes boundaries, collectors, or reporting serializers. The argparse subcommands retain their direct automation paths.
+PTR resolution uses dnspython only for already-observed hosts, with bounded timeouts and worker count. It does not enumerate DNS zones or names.
 
-Interactive navigation retains nearby Wi-Fi, device, interface, and full-scan snapshots while opening details or returning within a screen. Only an explicit Refresh action invokes a use case again. Nearby network and access-point selection continues through the M5 application service, device refresh runs M6 followed by M7, full scan uses M8, and report export passes one M8 snapshot to M9 for one or both formats.
+Vendor resolution reads an optional local IEEE MA-L CSV registry. The loader validates the registry once per enrichment operation and subsequent address lookups occur in memory.
 
-Current Network collects M1 once per explicit refresh, supplies those interfaces to M2, and supplies both results to the association-aware M3 entry point. This avoids repeating interface and current Wi-Fi association collection within the same interactive refresh.
+For observed hosts, globally administered MAC addresses can resolve to an assignment holder. For nearby APs, the deduplicated BSSID batch follows the same infrastructure:
 
-The root dispatch requires both stdin and stdout to be terminals. Non-TTY execution prints help without reading input. EOF exits normally, while `Ctrl+C` returns 130 through the interactive boundary without changing the operational exception policy of individual use cases.
+```text
+BSSID
+  -> LocalOuiVendorResolver
+  -> validated in-memory IEEE MA-L registry
+  -> AP-level vendor enrichment
+```
 
-M10.7 introduces `wlanscope.presentation` as a narrow terminal-rendering boundary. `theme.py` owns the single semantic Rich theme and textual status mapping, `formatting.py` owns pure unit and value formatting plus the compact/standard/wide breakpoints, `components.py` owns reusable literal-safe tables, headers, menus, notices, and empty states, and `rendering.py` owns the Current Network overview and adaptive Full Scan summaries. The presentation package receives immutable domain models and imports no collectors, use cases, PowerShell, ctypes, or Windows APIs.
+The project does not bundle or download a registry, and lookup makes no request to an external vendor service. Locally administered or multicast BSSIDs are not attributed globally. Registry absence, unknown assignments, and not-applicable addresses remain explicit without failing Nearby Wi-Fi.
 
-M10.8 adds `branding.py` within the same presentation boundary. It selects compact, standard, or wide root identity renderables from the existing breakpoints and composes trusted product metadata, the package version supplied by the interactive boundary, and a static privacy note. The interactive session controls placement and navigation; branding performs no collection, use-case execution, persistence, or platform access.
+## Untrusted Wireless Data
 
-M10.9 enriches the deduplicated nearby BSS batch through the existing local MA-L registry loader, so one registry load serves in-memory BSSID lookups for that operation. The bounded Information Element parser recognizes WPS vendor IEs and decodes selected big-endian TLV attributes into immutable metadata without retaining raw WPS blobs. Reporting owns an ephemeral first-seen anonymization context; JSON and Markdown share it during a dual export, while the immutable `FullNetworkSnapshot` and original-to-alias mapping are never mutated or persisted.
+Beacon and probe-response Information Elements originate outside the endpoint and are treated as untrusted input. The BSS adapter validates fixed-entry fields, supported-rate length, entry-relative offsets, payload sizes, element headers, and declared lengths before copying or interpreting data.
 
-String cells created by presentation tables are converted to literal `Text` values before Rich renders them. SSIDs, adapter and profile names, hostnames, vendors, issue messages, and paths therefore cannot inject Rich markup. Trusted labels and semantic status styles remain explicit UI content.
+The pure parser is bounded, non-recursive, deterministic, malformed-safe, and tolerant of unknown elements. It exposes selected summaries for SSID, rates, country, RSN, HT, VHT, extended capabilities, extension identifiers such as HE/EHT presence, and vendor OUIs. Unknown elements remain identifiers and counts rather than speculative fingerprints.
 
-InteractiveSession retains navigation, selection, refresh, cancellation, and use-case invocation. Returning from a Current Network detail redraws the existing overview without collecting another snapshot. `Console.clear()` is gated by interactive execution, terminal detection, and the injectable clear flag. Subcommands retain argparse dispatch and exit-code handling; non-TTY root and subcommand paths remain deterministic and do not add prompts or clearing.
+Passive WPS detection remains inside the same Information Element boundary:
 
-Presentation layouts use three stable modes: compact below 100 columns, standard from 100 through 139, and wide from 140 columns. Compact views retain IP, MAC, BSSID, interface identity, and other primary values while omitting secondary metadata. Wide views expose additional hardware, radio, neighbor, role-evidence, and full-scan summary fields without changing the underlying snapshots or reports.
+```text
+WLAN BSS entry
+  -> bounded IE blob
+  -> bounds-safe IE parser
+  -> Vendor Specific IE 221 / 00:50:F2:04
+  -> immutable WifiProtectedSetupDetails
+```
 
-M10.6 extends existing boundaries rather than adding a new pipeline. A current WLAN collection reuses one Native WLAN session to query optional interface capability, infrastructure and ad hoc authentication/cipher capability lists, channel, RSSI, operation mode, management-frame-protection capability, radio state, and cumulative WLAN statistics. General MAC counters and bounded high-value per-PHY counters follow the documented variable-length `WLAN_STATISTICS` layout. Every API-owned query buffer is length-checked, copied, and released with `WlanFreeMemory`; unsupported opcodes have explicit capability state and do not fail the base connection snapshot.
+WPS attributes use checked type-length-value parsing. Truncated headers, oversized lengths, conflicting duplicates, and unknown attributes cannot read beyond the copied blob or invalidate unrelated IEs. The parser consumes bytes already returned by Native WLAN; it performs no additional scan, association, packet capture, or `netsh` text parsing. Full raw WPS blobs and native pointers do not enter snapshots or reports.
 
-Interface statistics and hardware metadata are collected for all adapters in the existing constant PowerShell invocation. `Get-NetAdapterStatistics` is joined to `Get-NetAdapter -IncludeHidden` by interface identity before JSON crosses the platform boundary. Missing counter properties remain unavailable and are never converted to zero. Current-network enrichment likewise obtains `Get-NetConnectionProfile` for all profiles and optional CIM DHCP lease timestamps in one constant, non-interactive script. These sources enrich primary IP Helper data and cannot erase it when unavailable.
+## Reporting and Anonymization
 
-The BSS boundary now validates every fixed `WLAN_BSS_ENTRY` field, supported-rate length, entry-relative information-element offset, and information-element size before copying bytes. The pure information-element parser accepts at most the documented BSS payload bound, checks every element header and declared length, and treats truncation as data rather than an exception. It exports interpreted summaries for rates, country, RSN, documented HT/VHT/extended-capability presence, extension identifiers, and vendor OUIs; unknown elements remain counts and identifiers rather than speculative fingerprints. Raw native pointers and full raw IE blobs never enter domain snapshots or reports.
+Reporting maps `FullNetworkSnapshot` explicitly rather than reflecting arbitrary Python objects. JSON schema `1.0` is independent of package version. Timestamps normalize to UTC, byte-safe SSIDs retain a raw hexadecimal representation in normal reports, and Markdown escapes external values before table or inline rendering.
 
-Deep data flows through the same immutable M1 through M9 results. Full scan does not repeat the batch adapter or profile sources, nearby detail continues to use the single M4 snapshot, and device details add only evidence already produced by M6/M7, including Windows neighbor router indication. Provenance remains source-specific: Native WLAN and beacon/probe observations for radio data, IP Helper and structured PowerShell/CIM for network data, neighbor cache and ICMP for observation, DNS PTR for names, and the local IEEE MA-L registry for vendors.
+Normal reporting passes the immutable snapshot directly to JSON or Markdown rendering. An anonymized export inserts an ephemeral reporting context:
 
-The prerelease realtime connection-quality and per-link MLO structures are not bound because their official contract does not establish a stable minimum supported Windows release. `Get-NetAdapterHardwareInfo` is not added because its PCI-focused and custom-property output lacks a small cross-adapter property contract beyond the hardware metadata already returned by `Get-NetAdapter`. Vendor-specific advanced adapter properties are deliberately excluded from the primary domain.
+```text
+FullNetworkSnapshot
+        -> ReportAnonymizer
+        -> JSON renderer
+        -> Markdown renderer
+```
 
-PowerShell runs without a user profile, without a shell, without automatic execution-policy changes, and with a fixed timeout. Formatted tables and localized text parsing are not used.
+When both formats are requested, one `ReportAnonymizer` instance is shared, so the same real identifier receives the same alias in JSON and Markdown. Mappings are deterministic by first appearance within that export operation, are never persisted, and do not mutate the snapshot. Raw forms capable of reproducing a sanitized identifier, including visible raw SSID bytes, are not retained in anonymized output.
 
-Future Windows APIs and structured operating-system sources will follow the same priority. Localized textual commands remain last-resort fallbacks with dedicated parsers and sanitized fixtures.
+The writer creates a UTF-8 temporary file in the destination directory, flushes and synchronizes it, then atomically renames or replaces the destination. Existing files are refused unless overwrite is explicit, missing parent directories are not created, and temporary files are removed after failure. Reporting never collects, enriches, uploads, or synchronizes data.
 
-Collection, parsing, normalization, orchestration, and presentation remain separate responsibilities.
+## Reliability and Failure Model
 
-## Reliability policy
+Collectors use explicit bounds and return source-aware outcomes. Expected access denial, unsupported fields, timeouts, malformed optional input, and unavailable enrichment become textual issues or partial sections. They are not replaced with plausible values.
 
-Collectors will use explicit timeouts and return source-aware outcomes. Independent collector failures will produce partial results rather than erase valid observations. Unknown, unsupported, unavailable, and failed data will not be replaced by plausible values.
-
-## Engineering policy
-
-Production and test code use clear names, cohesive functions, explicit types, and narrow dependencies. Source code and tests contain no comments and avoid redundant docstrings. Documentation carries architectural explanations that do not belong inside code.
-
-The roadmap is finite. Architecture may grow through M12 only when required by implemented behavior, and v1.0.0 is the stopping point for the approved scope.
+The CLI maps success, operational failure, invalid usage or authorization, partial results, and cancellation to stable exit codes. Unexpected programming errors are not globally hidden. Non-TTY output does not add prompts, screen clearing, animation, or ANSI-dependent meaning.
